@@ -1,0 +1,9 @@
+# Ignore real env files
+.env
+
+# Allow example env files
+!.env.example
+
+# Ignore Python cache
+__pycache__/
+*.pyc
