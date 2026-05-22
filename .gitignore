@@ -1,0 +1,10 @@
+.env
+firebase-service-account.json
+__pycache__/
+*.py[cod]
+last_video_id.txt
+invite_tracker.json
+*.tmp
+*.broken-*
+*.migrated-*
+*.zip

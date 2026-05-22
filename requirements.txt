@@ -1,0 +1,5 @@
+discord.py
+psutil
+aiohttp
+python-dotenv
+firebase-admin
