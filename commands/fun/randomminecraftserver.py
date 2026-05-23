@@ -1,9 +1,8 @@
 import asyncio
 import base64
 import io
-import os
 import random
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import aiohttp
 import discord
@@ -11,17 +10,14 @@ from discord import app_commands
 from discord.ext import commands
 from discord.ext.commands import BucketType
 
+from services.minecraft_server_store import MinecraftServerStore
+
 # Config
 SERVERS_FILE = "servers.txt"
 HTTP_TIMEOUT = aiohttp.ClientTimeout(total=10)
 API_HEADERS = {"User-Agent": "RandomMCBot/Simple/1.1"}
 MCSTATUS_URL = "https://api.mcstatus.io/v2/status/java/{host}"
 MCSRVS_URL = "https://api.mcsrvstat.us/2/{host}"
-DEFAULT_SERVERS = [
-    "play.hypixel.net", "herobrine.org", "play.minehut.com", "play.cubecraft.net",
-    "minemen.club", "play.pika-network.net", "play.jartexnetwork.com", "blocksmc.com",
-    "play.wynncraft.com", "purpleprison.org", "bavaria-craft.de"
-]
 
 # ---- helper: owner-only check for slash commands ----
 async def _is_bot_owner(interaction: discord.Interaction) -> bool:
@@ -47,14 +43,18 @@ def owner_only():
 class RandomMinecraftServer(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.store = MinecraftServerStore()
+
+    async def initialize(self) -> None:
+        await self.store.seed_from_file(SERVERS_FILE)
 
     # ---------- TEXT COMMAND (shown in help under Fun) ----------
     @commands.cooldown(1, 6, BucketType.user)
     @commands.command(name="randomminecraftserver", aliases=["rms"], help="Show a random Minecraft server")
     async def randomminecraftserver(self, ctx: commands.Context):
-        hosts = self._load_servers()
+        hosts = await self.store.list_servers()
         if not hosts:
-            return await ctx.reply("❌ Server list is empty. Add some to `servers.txt`.")
+            return await ctx.reply("❌ Server list is empty in Firebase. Use `/rmsadd` to add one.")
         random.shuffle(hosts)
 
         chosen: Optional[Tuple[str, Dict[str, Any]]] = None
@@ -78,23 +78,19 @@ class RandomMinecraftServer(commands.Cog):
             await ctx.send(embed=embed)
 
     # ---------- SLASH COMMAND (owner-only, hidden from text help) ----------
-    @app_commands.command(name="rmsadd", description="Owner only: add a server to servers.txt")
+    @app_commands.command(name="rmsadd", description="Owner only: add a server to Firebase")
     @owner_only()
     async def slash_rmsadd(self, interaction: discord.Interaction, host: str):
         host = host.strip()
         if not host:
             return await interaction.response.send_message("Usage: /rmsadd <host[:port]>", ephemeral=True)
         try:
-            existing = set(self._load_servers())
-            if host in existing:
-                return await interaction.response.send_message("⚠️ Already in list.", ephemeral=True)
-            with open(SERVERS_FILE, "a", encoding="utf-8") as f:
-                if os.path.exists(SERVERS_FILE) and os.path.getsize(SERVERS_FILE) > 0:
-                    f.write("\n")
-                f.write(host)
-            await interaction.response.send_message(f"✅ Added `{host}` to servers.txt", ephemeral=True)
+            added = await self.store.add_server(host)
+            if not added:
+                return await interaction.response.send_message("⚠️ Already in Firebase.", ephemeral=True)
+            await interaction.response.send_message(f"✅ Added `{host}` to Firebase.", ephemeral=True)
         except Exception as e:
-            await interaction.response.send_message(f"❌ Could not write servers.txt: {e!s}", ephemeral=True)
+            await interaction.response.send_message(f"❌ Could not update Firebase: {e!s}", ephemeral=True)
 
     # Optional: nicer error if non-owner tries
     @slash_rmsadd.error
@@ -104,17 +100,6 @@ class RandomMinecraftServer(commands.Cog):
                 await interaction.response.send_message("⛔ Owner only.", ephemeral=True)
             except Exception:
                 pass
-
-    # ---------------- internals ----------------
-    def _load_servers(self) -> List[str]:
-        try:
-            if os.path.exists(SERVERS_FILE):
-                with open(SERVERS_FILE, "r", encoding="utf-8") as f:
-                    hosts = [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
-                    return list(dict.fromkeys(hosts))
-        except Exception:
-            pass
-        return DEFAULT_SERVERS[:]
 
     async def _status_any(self, session: aiohttp.ClientSession, host: str) -> Optional[Dict[str, Any]]:
         async def mcstatus():
@@ -190,7 +175,7 @@ class RandomMinecraftServer(commands.Cog):
         embed.add_field(name="Players", value=f"{online}/{maxp}", inline=True)
         embed.add_field(name="Version", value=str(version), inline=True)
         embed.add_field(name="MOTD", value=motd_text[:1000], inline=False)
-        embed.set_footer(text="Source: editable servers.txt + live status")
+        embed.set_footer(text="Source: Firebase Firestore + live status")
 
         icon = data.get("icon")
         if isinstance(icon, str) and icon.startswith("data:image"):
@@ -204,7 +189,9 @@ class RandomMinecraftServer(commands.Cog):
         return embed, None
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(RandomMinecraftServer(bot))
+    cog = RandomMinecraftServer(bot)
+    await cog.initialize()
+    await bot.add_cog(cog)
     # Put text command under Fun in your help menu
     cmd = bot.get_command("randomminecraftserver")
     if cmd:

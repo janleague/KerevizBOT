@@ -10,8 +10,8 @@ A polished, modular Discord bot built for community management and creator-focus
 - **Giveaways**: persistent button-based giveaways with rerolls, role requirements, bonus entries, and recovery for missed announcements.
 - **AI commands**: free text and image utilities powered by Pollinations.
 - **Hypixel stats**: BedWars and SkyWars player statistics with clean Discord embeds.
-- **Minecraft server discovery**: random server lookup from an editable `servers.txt` list.
-- **Firebase persistence**: Firestore stores YouTube announcement state and invite tracker data.
+- **Minecraft server discovery**: random live server lookup from a Firestore-backed server list.
+- **Firebase persistence**: Firestore stores YouTube announcements, invite tracking, and Minecraft server data.
 
 ## Tech Stack
 
@@ -37,6 +37,7 @@ KerevizBOT/
   services/
     firebase_client.py
     invite_store.py
+    minecraft_server_store.py
     youtube_store.py
     blocked_commands.py
   requirements.txt
@@ -97,7 +98,12 @@ The invite tracker stores:
 - `invite_trackers/{guild_id}/member_invites/{user_id}`
 - `invite_trackers/{guild_id}/member_joins/{member_id}`
 
+The Minecraft server command stores:
+
+- `minecraft_servers/{server_host}`
+
 Legacy local files such as `last_video_id.txt` and `invite_tracker.json` are migrated automatically when possible.
+The bundled `servers.txt` file is used as the initial seed list for Minecraft servers.
 
 ## Commands
 
@@ -147,9 +153,9 @@ Legacy local files such as `last_video_id.txt` and `invite_tracker.json` are mig
 - `!roll`
 - `!8ball`
 - `!meme`
-- `!randomminecraftserver`
-- `!rms`
-- `/rmsadd`
+- `!randomminecraftserver` - Show a random live Minecraft server from Firestore.
+- `!rms` - Alias for `!randomminecraftserver`.
+- `/rmsadd` - Owner-only command to add a Minecraft server to Firestore.
 
 ### AI
 
