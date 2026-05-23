@@ -8,6 +8,7 @@ CATEGORY_META = {
     "AI": {"emoji": "🤖", "desc": "Shows AI assistant commands."},
     "Fun": {"emoji": "🎉", "desc": "Shows fun & entertainment commands."},
     "General": {"emoji": "✨", "desc": "Shows general commands."},
+    "Guard": {"emoji": "🛡️", "desc": "Shows server protection commands."},
     "Hypixel": {"emoji": "📕", "desc": "Shows Hypixel-related commands."},
     "Invites": {"emoji": "📨", "desc": "Shows invite tracking commands."},
 }

@@ -5,6 +5,7 @@ A polished, modular Discord bot built for community management and creator-focus
 ## Highlights
 
 - **Moderation tools**: ban, unban, command toggling, owner utilities, and subscriber role management.
+- **Guard tools**: simple anti-ad protection that blocks Discord invite links without blocking GIFs or media.
 - **YouTube announcements**: polls a YouTube RSS feed and posts new upload alerts with Firestore-backed duplicate protection.
 - **Invite tracking**: tracks invite usage, member joins/leaves, reward roles, leaderboards, and logging.
 - **Giveaways**: persistent button-based giveaways with rerolls, role requirements, bonus entries, and recovery for missed announcements.
@@ -32,10 +33,12 @@ KerevizBOT/
     ai.py
     ban.py
     giveaway.py
+    guard.py
     invite_tracker.py
     ...
   services/
     firebase_client.py
+    guard_store.py
     invite_store.py
     minecraft_server_store.py
     youtube_store.py
@@ -102,6 +105,10 @@ The Minecraft server command stores:
 
 - `minecraft_servers/{server_host}`
 
+Guard settings store:
+
+- `guard_configs/{guild_id}`
+
 Legacy local files such as `last_video_id.txt` and `invite_tracker.json` are migrated automatically when possible.
 The bundled `servers.txt` file is used as the initial seed list for Minecraft servers.
 
@@ -131,6 +138,12 @@ The bundled `servers.txt` file is used as the initial seed list for Minecraft se
 - `/giveaway delete`
 - `/giveaway list`
 - `/giveaway info`
+
+### Guard
+
+- `!antiadd` - Show anti-ad status.
+- `!antiadd on` - Block Discord invite advertisements.
+- `!antiadd off` - Disable anti-ad protection.
 
 ### Invites
 
