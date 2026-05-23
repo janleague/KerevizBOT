@@ -6,6 +6,7 @@ A polished, modular Discord bot built for community management and creator-focus
 
 - **Moderation tools**: ban, unban, command toggling, owner utilities, and subscriber role management.
 - **Guard tools**: simple anti-ad protection that blocks Discord invite links without blocking GIFs or media.
+- **Deleted image logs**: caches image attachments and reposts deleted images to a dedicated log channel.
 - **YouTube announcements**: polls a YouTube RSS feed and posts new upload alerts with Firestore-backed duplicate protection.
 - **Invite tracking**: tracks invite usage, member joins/leaves, reward roles, leaderboards, and logging.
 - **Giveaways**: persistent button-based giveaways with rerolls, role requirements, bonus entries, and recovery for missed announcements.
@@ -32,11 +33,13 @@ KerevizBOT/
     fun/
     ai.py
     ban.py
+    deleted_image_logs.py
     giveaway.py
     guard.py
     invite_tracker.py
     ...
   services/
+    deleted_image_store.py
     firebase_client.py
     guard_store.py
     invite_store.py
@@ -66,6 +69,7 @@ LOG_CHANNEL_ID=optional-log-channel-id
 WELCOME_CHANNEL_ID=optional-welcome-channel-id
 LEAVES_LOG_CHANNEL_ID=optional-leaves-log-channel-id
 MESSAGES_LOG_CHANNEL_ID=optional-message-log-channel-id
+DELETED_IMAGE_LOG_CHANNEL_ID=optional-deleted-image-log-channel-id
 HYPIXEL_API_KEY=optional-hypixel-api-key
 POLLINATIONS_API_KEY=optional-pollinations-key
 GITHUB_URL=https://github.com/your-name/your-repo
@@ -109,8 +113,13 @@ Guard settings store:
 
 - `guard_configs/{guild_id}`
 
+Deleted image logging stores temporary metadata in:
+
+- `deleted_image_cache/{message_id}`
+
 Legacy local files such as `last_video_id.txt` and `invite_tracker.json` are migrated automatically when possible.
 The bundled `servers.txt` file is used as the initial seed list for Minecraft servers.
+Deleted image files are cached locally in `deleted_image_cache/` until the deleted-image log is sent.
 
 ## Commands
 
@@ -190,6 +199,7 @@ Never commit secrets to GitHub. These files are intentionally ignored:
 
 - `.env`
 - `firebase-service-account.json`
+- `deleted_image_cache/`
 - `*.zip`
 - local cache and migration files
 

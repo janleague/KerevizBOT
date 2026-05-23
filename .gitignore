@@ -4,6 +4,7 @@ __pycache__/
 *.py[cod]
 last_video_id.txt
 invite_tracker.json
+deleted_image_cache/
 *.tmp
 *.broken-*
 *.migrated-*
