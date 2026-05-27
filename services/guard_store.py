@@ -9,6 +9,7 @@ COLLECTION_NAME = "guard_configs"
 def default_config() -> dict[str, Any]:
     return {
         "anti_ad_enabled": False,
+        "anti_ghost_ping_enabled": False,
     }
 
 
@@ -16,6 +17,7 @@ def normalize_config(config: dict[str, Any] | None) -> dict[str, Any]:
     normalized = default_config()
     if isinstance(config, dict):
         normalized["anti_ad_enabled"] = bool(config.get("anti_ad_enabled", False))
+        normalized["anti_ghost_ping_enabled"] = bool(config.get("anti_ghost_ping_enabled", False))
     return normalized
 
 
@@ -41,6 +43,7 @@ class GuardStore:
         self._config_ref(guild_id).set(
             {
                 "anti_ad_enabled": bool(config.get("anti_ad_enabled", False)),
+                "anti_ghost_ping_enabled": bool(config.get("anti_ghost_ping_enabled", False)),
                 "updated_at": firestore.SERVER_TIMESTAMP,
             },
             merge=True,

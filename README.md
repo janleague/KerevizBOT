@@ -5,7 +5,7 @@ A polished, modular Discord bot built for community management and creator-focus
 ## Highlights
 
 - **Moderation tools**: ban, unban, command toggling, owner utilities, and subscriber role management.
-- **Guard tools**: simple anti-ad protection that blocks Discord invite links without blocking GIFs or media.
+- **Guard tools**: anti-ad and anti-ghost-ping protection for cleaner community chat.
 - **Deleted image logs**: caches image attachments and reposts deleted images to a dedicated log channel.
 - **YouTube announcements**: polls a YouTube RSS feed with retry protection and posts new upload alerts with Firestore-backed duplicate protection.
 - **Invite tracking**: tracks invite usage, member joins/leaves, reward roles, leaderboards, and logging.
@@ -155,6 +155,9 @@ Deleted image files are cached locally in `deleted_image_cache/` until the delet
 - `!antiadd` - Show anti-ad status.
 - `!antiadd on` - Block Discord invite advertisements.
 - `!antiadd off` - Disable anti-ad protection.
+- `!antighostping` - Show anti-ghost-ping status.
+- `!antighostping on` - Warn users who delete messages after pinging someone.
+- `!antighostping off` - Disable anti-ghost-ping protection.
 
 ### Invites
 

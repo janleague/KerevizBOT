@@ -32,6 +32,7 @@ class Guard(commands.Cog):
         self._lock = asyncio.Lock()
         self.store = GuardStore()
         self._data: dict[str, Any] = {"version": 1, "guilds": {}}
+        self._bot_deleted_message_ids: set[int] = set()
 
     async def initialize(self) -> None:
         self._data = await self.store.load_all()
@@ -60,6 +61,14 @@ class Guard(commands.Cog):
         permissions = message.channel.permissions_for(me)
         return bool(permissions.manage_messages)
 
+    @staticmethod
+    def _can_send(message: discord.Message) -> bool:
+        me = message.guild.me if message.guild else None
+        if me is None:
+            return False
+        permissions = message.channel.permissions_for(me)
+        return bool(permissions.send_messages)
+
     def _status_embed(self, config: dict[str, Any]) -> discord.Embed:
         enabled = bool(config.get("anti_ad_enabled"))
         embed = discord.Embed(title="Guard: Anti-Ad", color=discord.Color.green())
@@ -67,6 +76,14 @@ class Guard(commands.Cog):
         embed.add_field(name="Blocks", value="Discord invite links", inline=True)
         embed.add_field(name="Allows", value="GIFs, images, attachments, and normal links", inline=False)
         embed.set_footer(text="Use !antiadd on or !antiadd off to change it.")
+        return embed
+
+    def _ghost_ping_status_embed(self, config: dict[str, Any]) -> discord.Embed:
+        enabled = bool(config.get("anti_ghost_ping_enabled"))
+        embed = discord.Embed(title="Guard: Anti-Ghost Ping", color=discord.Color.green())
+        embed.add_field(name="Status", value="Enabled" if enabled else "Disabled", inline=True)
+        embed.add_field(name="Detects", value="Deleted messages with user, role, @here, or @everyone pings", inline=False)
+        embed.set_footer(text="Use !antighostping on or !antighostping off to change it.")
         return embed
 
     @commands.command(
@@ -97,6 +114,34 @@ class Guard(commands.Cog):
             )
         await ctx.send(f"Anti-ad is now **{'enabled' if enabled else 'disabled'}**.")
 
+    @commands.command(
+        name="antighostping",
+        aliases=["antighost", "ghostping"],
+        help="Warn users who delete messages after pinging someone.",
+    )
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    async def antighostping(self, ctx: commands.Context, value: str = "status"):
+        value = value.strip().lower()
+        async with self._lock:
+            config = self._config(ctx.guild.id)
+            if value in {"status", "config", "info"}:
+                return await ctx.send(embed=self._ghost_ping_status_embed(deepcopy(config)))
+
+            try:
+                enabled = parse_toggle(value)
+            except ValueError as exc:
+                return await ctx.send(str(exc))
+
+            config["anti_ghost_ping_enabled"] = enabled
+            await self._save_guild(ctx.guild.id)
+
+        if enabled and not self._can_send(ctx.message):
+            return await ctx.send(
+                "Anti-ghost ping is enabled, but I need **Send Messages** permission to warn users."
+            )
+        await ctx.send(f"Anti-ghost ping is now **{'enabled' if enabled else 'disabled'}**.")
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if not message.guild or message.author.bot or not message.content:
@@ -114,8 +159,10 @@ class Guard(commands.Cog):
             return
 
         try:
+            self._bot_deleted_message_ids.add(message.id)
             await message.delete()
         except (discord.Forbidden, discord.HTTPException):
+            self._bot_deleted_message_ids.discard(message.id)
             return
 
         try:
@@ -127,7 +174,35 @@ class Guard(commands.Cog):
         except (discord.Forbidden, discord.HTTPException):
             pass
 
+    @commands.Cog.listener()
+    async def on_message_delete(self, message: discord.Message):
+        if not message.guild or message.author.bot:
+            return
+        if message.id in self._bot_deleted_message_ids:
+            self._bot_deleted_message_ids.discard(message.id)
+            return
+        if not isinstance(message.author, discord.Member):
+            return
+        if self._is_exempt(message.author):
+            return
+        if not (message.mentions or message.role_mentions or message.mention_everyone):
+            return
+
+        async with self._lock:
+            enabled = bool(self._config(message.guild.id).get("anti_ghost_ping_enabled"))
+        if not enabled or not self._can_send(message):
+            return
+
+        try:
+            await message.channel.send(
+                f"Hello {message.author.mention}, ghost pinging is not allowed here. Please don't do that.",
+                allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
     @antiadd.error
+    @antighostping.error
     async def antiadd_error(self, ctx: commands.Context, error: commands.CommandError):
         if isinstance(error, commands.MissingPermissions):
             return await ctx.send("You need Manage Server permission to configure Guard.")
@@ -140,6 +215,7 @@ async def setup(bot: commands.Bot):
     cog = Guard(bot)
     await cog.initialize()
     await bot.add_cog(cog)
-    command = bot.get_command("antiadd")
-    if command:
-        command.category = "Guard"
+    for command_name in ("antiadd", "antighostping"):
+        command = bot.get_command(command_name)
+        if command:
+            command.category = "Guard"
