@@ -236,4 +236,6 @@ git push
 
 ## License
 
-Private project. All rights reserved unless a license is added.
+Source-available proprietary project. Public visibility is for portfolio, review, demonstration, and Hypixel API application purposes only.
+
+All rights are reserved. Copying, modifying, distributing, hosting, deploying, or reusing this software requires prior written permission from the copyright holder. See [LICENSE](LICENSE).
