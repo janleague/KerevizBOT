@@ -11,7 +11,7 @@ A polished, modular Discord bot built for community management and creator-focus
 - **Invite tracking**: tracks invite usage, member joins/leaves, reward roles, leaderboards, and logging.
 - **Giveaways**: persistent button-based giveaways with rerolls, role requirements, bonus entries, and recovery for missed announcements.
 - **AI commands**: free text and image utilities powered by Pollinations.
-- **Hypixel stats**: BedWars and SkyWars player statistics with clean Discord embeds.
+- **Hypixel stats**: profile, BedWars, SkyWars, and Duels player statistics with clean Discord embeds.
 - **Minecraft server discovery**: random live server lookup from a Firestore-backed server list.
 - **Firebase persistence**: Firestore stores YouTube announcements, invite tracking, and Minecraft server data.
 
@@ -127,7 +127,8 @@ Deleted image files are cached locally in `deleted_image_cache/` until the delet
 
 - `!help` - Show the command menu.
 - `!channel` - Show the official YouTube channel with a button.
-- `!stats` - Show bot statistics.
+- `!botstats` - Show bot statistics.
+- `!binfo` - Alias for `!botstats`.
 
 ### Moderation
 
@@ -190,6 +191,9 @@ Deleted image files are cached locally in `deleted_image_cache/` until the delet
 
 ### Hypixel
 
+- `!stats`
+- `!hstats`
+- `!duels`
 - `!bedwars`
 - `!skywars`
 

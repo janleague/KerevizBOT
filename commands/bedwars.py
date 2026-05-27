@@ -1,9 +1,14 @@
 import discord
 from discord.ext import commands
-import aiohttp
-import asyncio
 
-HTTP_TIMEOUT = aiohttp.ClientTimeout(total=12)
+from services.hypixel_client import (
+    HypixelClientError,
+    as_int,
+    fetch_hypixel_player,
+    get_rank,
+    ratio,
+)
+
 
 class Bedwars(commands.Cog):
     def __init__(self, bot):
@@ -15,53 +20,34 @@ class Bedwars(commands.Cog):
         help="Displays BedWars statistics for a given player."
     )
     async def bedwars(self, ctx, username):
-        if not self.api_key:
-            await ctx.send("❌ HYPIXEL_API_KEY is not configured.")
-            return
-
         try:
-            async with aiohttp.ClientSession(timeout=HTTP_TIMEOUT) as session:
-                async with session.get(f"https://api.mojang.com/users/profiles/minecraft/{username.lower()}") as mojang_resp:
-                    if mojang_resp.status != 200:
-                        await ctx.send("❌ Player not found. Please check the username and try again.")
-                        return
-                    mojang_data = await mojang_resp.json()
-                    uuid = mojang_data["id"]
-
-                async with session.get(f"https://api.hypixel.net/player?key={self.api_key}&uuid={uuid}") as hypixel_resp:
-                    if hypixel_resp.status != 200:
-                        await ctx.send("❌ Hypixel API is unavailable right now.")
-                        return
-                    data = await hypixel_resp.json()
-        except (aiohttp.ClientError, asyncio.TimeoutError):
-            await ctx.send("❌ Failed to contact Mojang or Hypixel. Please try again later.")
+            bundle = await fetch_hypixel_player(self.api_key, username)
+        except HypixelClientError as exc:
+            await ctx.send(f"❌ {exc}")
             return
 
-        if not data.get("success") or not data.get("player"):
-            await ctx.send("❌ Failed to retrieve Hypixel data.")
-            return
-
-        player = data["player"]
+        player = bundle.player
+        uuid = bundle.uuid
         stats = player.get("stats", {}).get("Bedwars", {})
 
-        displayname = player.get("displayname", username)
-        rank = self.get_rank(player)
+        displayname = player.get("displayname", bundle.username)
+        rank = get_rank(player)
         color = self.get_rank_color(rank)
-        level = int(player.get("achievements", {}).get("bedwars_level", 0))
+        level = as_int(player.get("achievements", {}).get("bedwars_level", 0))
 
-        wins = stats.get("wins_bedwars", 0)
-        losses = stats.get("losses_bedwars", 0)
-        kills = stats.get("kills_bedwars", 0)
-        deaths = stats.get("deaths_bedwars", 1) or 1
-        fkills = stats.get("final_kills_bedwars", 0)
-        fdeaths = stats.get("final_deaths_bedwars", 1) or 1
-        beds_broken = stats.get("beds_broken_bedwars", 0)
-        beds_lost = stats.get("beds_lost_bedwars", 1) or 1
+        wins = as_int(stats.get("wins_bedwars", 0))
+        losses = as_int(stats.get("losses_bedwars", 0))
+        kills = as_int(stats.get("kills_bedwars", 0))
+        deaths = as_int(stats.get("deaths_bedwars", 1)) or 1
+        fkills = as_int(stats.get("final_kills_bedwars", 0))
+        fdeaths = as_int(stats.get("final_deaths_bedwars", 1)) or 1
+        beds_broken = as_int(stats.get("beds_broken_bedwars", 0))
+        beds_lost = as_int(stats.get("beds_lost_bedwars", 1)) or 1
 
-        kdr = round(kills / deaths, 2)
-        fkdr = round(fkills / fdeaths, 2)
-        bblr = round(beds_broken / beds_lost, 2)
-        wlr = round(wins / (losses or 1), 2)
+        kdr = ratio(kills, deaths)
+        fkdr = ratio(fkills, fdeaths)
+        bblr = ratio(beds_broken, beds_lost)
+        wlr = ratio(wins, losses)
 
         pro_score = (
             min(wlr, 10) * 20 +
@@ -115,18 +101,6 @@ class Bedwars(commands.Cog):
         embed.set_footer(text="Data fetched from Hypixel API.")
 
         await ctx.send(embed=embed)
-
-    def get_rank(self, player):
-        if player.get("rank") and player["rank"] != "NORMAL":
-            return player["rank"]
-        elif player.get("monthlyPackageRank") == "SUPERSTAR":
-            return "MVP++"
-        elif player.get("newPackageRank"):
-            return player["newPackageRank"].replace("_PLUS", "+").replace("_", "")
-        elif player.get("packageRank"):
-            return player["packageRank"].replace("_PLUS", "+").replace("_", "")
-        else:
-            return "None"
 
     def get_rank_color(self, rank):
         colors = {
