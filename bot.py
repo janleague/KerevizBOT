@@ -1,6 +1,7 @@
 import discord
 import asyncio
 import os
+import re
 import sys
 import time
 import platform
@@ -39,6 +40,16 @@ YT_NS = {
     "atom": "http://www.w3.org/2005/Atom",
     "yt":   "http://www.youtube.com/xml/schemas/2015",
 }
+YT_CHANNEL_ID_RE = re.compile(r"UC[0-9A-Za-z_-]{22}")
+YT_HANDLE_RE = re.compile(r"(?:youtube\.com/)?(@[A-Za-z0-9._-]+)", re.IGNORECASE)
+YT_FEED_HEADERS = {
+    "User-Agent": "KerevizBOT/1.0 (+https://github.com/janleague/KerevizBOT)",
+    "Accept": "application/atom+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5",
+}
+YT_FEED_TIMEOUT = aiohttp.ClientTimeout(total=15)
+YT_FEED_MAX_ATTEMPTS = 3
+YT_FEED_RETRY_STATUSES = {404, 429, 500, 502, 503, 504}
+YT_ERROR_LOG_COOLDOWN = 3600
 
 # ===================== DISCORD SETUP =====================
 intents = discord.Intents.default()
@@ -58,6 +69,9 @@ slash_synced = False
 youtube_task: asyncio.Task | None = None
 announce_view_registered = False
 youtube_store = YouTubeAnnouncementStore()
+yt_feed_failure_count = 0
+yt_feed_last_error_key: str | None = None
+yt_feed_last_error_log_at = 0.0
 
 
 def remove_kerevizcraft_commands() -> list[str]:
@@ -127,6 +141,129 @@ async def _persist_last_video_state(vid: str | None) -> None:
         await youtube_store.set_last_video_id(vid)
 
 
+def _extract_youtube_channel_id(source: str | None) -> str | None:
+    if not source:
+        return None
+    match = YT_CHANNEL_ID_RE.search(source.strip())
+    return match.group(0) if match else None
+
+
+def _youtube_handle_url(source: str | None) -> str | None:
+    if not source:
+        return None
+    raw_value = source.strip()
+    match = YT_HANDLE_RE.search(raw_value)
+    if not match:
+        return None
+    return f"https://www.youtube.com/{match.group(1)}"
+
+
+async def _record_youtube_feed_failure(reason: str) -> None:
+    global yt_feed_failure_count, yt_feed_last_error_key, yt_feed_last_error_log_at
+
+    yt_feed_failure_count += 1
+    now = time.time()
+    key = reason.strip()
+    should_log = (
+        key != yt_feed_last_error_key
+        or yt_feed_failure_count in {1, 3}
+        or now - yt_feed_last_error_log_at >= YT_ERROR_LOG_COOLDOWN
+    )
+    if not should_log:
+        return
+
+    suffix = ""
+    if yt_feed_failure_count > 1:
+        suffix = f" (failure count: {yt_feed_failure_count}; repeated messages are rate-limited)"
+    await send_log(f"[YT] Feed check failed: {key}.{suffix}")
+    yt_feed_last_error_key = key
+    yt_feed_last_error_log_at = now
+
+
+async def _record_youtube_feed_success() -> None:
+    global yt_feed_failure_count, yt_feed_last_error_key, yt_feed_last_error_log_at
+
+    if yt_feed_failure_count:
+        await send_log(f"[YT] Feed recovered after {yt_feed_failure_count} failed check(s).")
+    yt_feed_failure_count = 0
+    yt_feed_last_error_key = None
+    yt_feed_last_error_log_at = 0.0
+
+
+async def _resolve_youtube_channel_id(
+    session: aiohttp.ClientSession,
+    source: str | None,
+    *,
+    log_failures: bool = True,
+) -> str | None:
+    channel_id = _extract_youtube_channel_id(source)
+    if channel_id:
+        return channel_id
+
+    handle_url = _youtube_handle_url(source)
+    if not handle_url:
+        if log_failures:
+            await _record_youtube_feed_failure("invalid YouTube channel source")
+        return None
+
+    try:
+        async with session.get(handle_url, timeout=YT_FEED_TIMEOUT) as resp:
+            if resp.status != 200:
+                if log_failures:
+                    await _record_youtube_feed_failure(f"channel source resolve returned HTTP {resp.status}")
+                return None
+            page_text = await resp.text()
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        if log_failures:
+            await _record_youtube_feed_failure(f"channel source resolve error: {type(exc).__name__}")
+        return None
+
+    channel_id = _extract_youtube_channel_id(page_text)
+    if not channel_id and log_failures:
+        await _record_youtube_feed_failure("could not resolve YouTube channel ID from source")
+    return channel_id
+
+
+async def _fetch_youtube_feed_text(
+    session: aiohttp.ClientSession,
+    feed_url: str,
+    *,
+    log_failures: bool = True,
+) -> str | None:
+    last_status: int | None = None
+    last_error: str | None = None
+
+    for attempt in range(1, YT_FEED_MAX_ATTEMPTS + 1):
+        try:
+            async with session.get(feed_url, timeout=YT_FEED_TIMEOUT) as resp:
+                if resp.status == 200:
+                    return await resp.text()
+                last_status = resp.status
+                last_error = None
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            last_error = type(exc).__name__
+            last_status = None
+
+        should_retry = (
+            attempt < YT_FEED_MAX_ATTEMPTS
+            and (last_status in YT_FEED_RETRY_STATUSES or last_error is not None)
+        )
+        if should_retry:
+            await asyncio.sleep(min(2 * attempt, 6))
+            continue
+        break
+
+    if not log_failures:
+        return None
+    if last_status is not None:
+        await _record_youtube_feed_failure(f"HTTP {last_status}")
+    elif last_error:
+        await _record_youtube_feed_failure(f"network error: {last_error}")
+    else:
+        await _record_youtube_feed_failure("unknown fetch error")
+    return None
+
+
 async def _announce_video_once(channel, video_id: str, link: str, log_prefix: str) -> bool:
     global last_video_id
 
@@ -158,21 +295,27 @@ async def _fetch_latest_video() -> tuple[str, str] | None:
     Fetch the YouTube RSS feed and return (video_id, video_url) of the
     latest entry, or None on failure.  Fully async — no blocking calls.
     """
+    global YOUTUBE_CHANNEL_ID
+
     if not YOUTUBE_CHANNEL_ID:
         return None
-    feed_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={YOUTUBE_CHANNEL_ID}"
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(feed_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                if resp.status != 200:
-                    await send_log(f"[YT] Feed returned HTTP {resp.status}.")
-                    return None
-                xml_text = await resp.text()
+        async with aiohttp.ClientSession(headers=YT_FEED_HEADERS) as session:
+            channel_id = await _resolve_youtube_channel_id(session, YOUTUBE_CHANNEL_ID)
+            if not channel_id:
+                return None
+            if channel_id != YOUTUBE_CHANNEL_ID:
+                YOUTUBE_CHANNEL_ID = channel_id
+
+            feed_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+            xml_text = await _fetch_youtube_feed_text(session, feed_url)
+            if xml_text is None:
+                return None
 
         root = ET.fromstring(xml_text)
         entry = root.find("atom:entry", YT_NS)
         if entry is None:
-            await send_log("[YT] Feed has no entries.")
+            await _record_youtube_feed_failure("feed has no entries")
             return None
 
         vid_elem  = entry.find("yt:videoId", YT_NS)
@@ -182,15 +325,16 @@ async def _fetch_latest_video() -> tuple[str, str] | None:
         link = link_elem.get("href")  if link_elem is not None else None
 
         if vid and link:
+            await _record_youtube_feed_success()
             return vid, link
-        await send_log("[YT] Could not extract videoId or link from feed entry.")
+        await _record_youtube_feed_failure("could not extract videoId or link from feed entry")
         return None
 
     except ET.ParseError as e:
-        await send_log(f"[YT] XML parse error: {e}")
+        await _record_youtube_feed_failure(f"XML parse error: {e}")
         return None
     except Exception as e:
-        await send_log(f"[YT] Fetch error: {e}")
+        await _record_youtube_feed_failure(f"fetch error: {e}")
         return None
 
 # ===================== ADMIN TEXT COMMANDS =====================
@@ -368,9 +512,29 @@ async def announce(interaction: discord.Interaction, action: str, value: str | N
         return
 
     if action == "set_rss":
-        YOUTUBE_CHANNEL_ID = value
-        await interaction.response.send_message("✅ YouTube channel ID set.", view=AnnounceButtonsFix())
-        await send_log(f"[CONFIG] YouTube channel ID set to {YOUTUBE_CHANNEL_ID} via slash.")
+        if not value:
+            return await interaction.response.send_message("Provide a YouTube channel ID, handle, or channel URL.", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+        async with aiohttp.ClientSession(headers=YT_FEED_HEADERS) as session:
+            resolved_channel_id = await _resolve_youtube_channel_id(session, value, log_failures=False)
+            if not resolved_channel_id:
+                return await interaction.followup.send(
+                    "❌ I could not validate that YouTube channel source. Use a channel ID, `@handle`, or channel URL.",
+                    ephemeral=True,
+                )
+
+            feed_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={resolved_channel_id}"
+            xml_text = await _fetch_youtube_feed_text(session, feed_url, log_failures=False)
+            if xml_text is None:
+                return await interaction.followup.send(
+                    "❌ The channel resolved, but the YouTube feed did not respond successfully. Try again later.",
+                    ephemeral=True,
+                )
+
+        YOUTUBE_CHANNEL_ID = resolved_channel_id
+        await interaction.followup.send("✅ YouTube channel ID set and validated.", ephemeral=True, view=AnnounceButtonsFix())
+        await send_log("[CONFIG] YouTube channel ID validated and updated via slash.")
         return
 
     if action == "set_freq":

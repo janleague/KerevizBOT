@@ -7,7 +7,7 @@ A polished, modular Discord bot built for community management and creator-focus
 - **Moderation tools**: ban, unban, command toggling, owner utilities, and subscriber role management.
 - **Guard tools**: simple anti-ad protection that blocks Discord invite links without blocking GIFs or media.
 - **Deleted image logs**: caches image attachments and reposts deleted images to a dedicated log channel.
-- **YouTube announcements**: polls a YouTube RSS feed and posts new upload alerts with Firestore-backed duplicate protection.
+- **YouTube announcements**: polls a YouTube RSS feed with retry protection and posts new upload alerts with Firestore-backed duplicate protection.
 - **Invite tracking**: tracks invite usage, member joins/leaves, reward roles, leaderboards, and logging.
 - **Giveaways**: persistent button-based giveaways with rerolls, role requirements, bonus entries, and recovery for missed announcements.
 - **AI commands**: free text and image utilities powered by Pollinations.
@@ -63,7 +63,7 @@ python -m pip install -r requirements.txt
 ```env
 DISCORD_TOKEN=your-discord-bot-token
 OWNER_ID=your-discord-user-id
-YOUTUBE_CHANNEL_ID=your-youtube-channel-id
+YOUTUBE_CHANNEL_ID=your-youtube-channel-id-or-handle
 DISCORD_CHANNEL_ID=your-announcement-channel-id
 LOG_CHANNEL_ID=optional-log-channel-id
 WELCOME_CHANNEL_ID=optional-welcome-channel-id
