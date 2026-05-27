@@ -127,8 +127,9 @@ Deleted image files are cached locally in `deleted_image_cache/` until the delet
 
 - `!help` - Show the command menu.
 - `!channel` - Show the official YouTube channel with a button.
-- `!botstats` - Show bot statistics.
-- `!binfo` - Alias for `!botstats`.
+- `!stats` - Show bot statistics.
+- `!botstats` - Alias for `!stats`.
+- `!binfo` - Alias for `!stats`.
 
 ### Moderation
 
@@ -191,8 +192,8 @@ Deleted image files are cached locally in `deleted_image_cache/` until the delet
 
 ### Hypixel
 
-- `!stats`
 - `!hstats`
+- `!hypixel`
 - `!duels`
 - `!bedwars`
 - `!skywars`

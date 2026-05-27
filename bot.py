@@ -430,10 +430,10 @@ def build_stats_embed() -> discord.Embed:
     return e
 
 
-@bot.command(name="botstats", aliases=["binfo"], help="Show bot statistics and useful buttons")
-async def botstats(ctx: commands.Context):
+@bot.command(name="stats", aliases=["botstats", "binfo"], help="Show bot statistics and useful buttons")
+async def stats(ctx: commands.Context):
     await ctx.send(embed=build_stats_embed(), view=StatsView())
-botstats.category = "General"
+stats.category = "General"
 
 # ===================== ANNOUNCE SYSTEM (SLASH + BUTTONS) =====================
 class AnnounceButtonsFix(discord.ui.View):

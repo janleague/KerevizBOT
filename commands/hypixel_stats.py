@@ -29,7 +29,7 @@ class HypixelStats(commands.Cog):
         self.bot = bot
         self.api_key = bot.HYPIXEL_API_KEY
 
-    @commands.command(name="stats", aliases=["hstats", "hypixel"], help="Show a player's general Hypixel profile stats.")
+    @commands.command(name="hstats", aliases=["hypixel"], help="Show a player's general Hypixel profile stats.")
     async def hypixel_stats(self, ctx: commands.Context, username: str):
         try:
             bundle = await fetch_hypixel_player(self.api_key, username)
@@ -89,7 +89,7 @@ class HypixelStats(commands.Cog):
     @hypixel_stats.error
     async def hypixel_stats_error(self, ctx: commands.Context, error: commands.CommandError):
         if isinstance(error, commands.MissingRequiredArgument):
-            return await ctx.send("Usage: `!stats <minecraft_username>`")
+            return await ctx.send("Usage: `!hstats <minecraft_username>`")
         raise error
 
 
