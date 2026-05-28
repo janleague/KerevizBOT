@@ -15,8 +15,6 @@ from services.hypixel_client import (
 class Skywars(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # keep the same pattern as bedwars: key comes from bot instance
-        self.api_key = bot.HYPIXEL_API_KEY
 
     @commands.command(
         name="skywars",
@@ -24,7 +22,7 @@ class Skywars(commands.Cog):
     )
     async def skywars(self, ctx, username):
         try:
-            bundle = await fetch_hypixel_player(self.api_key, username)
+            bundle = await fetch_hypixel_player(self.bot.HYPIXEL_API_KEY, username)
         except HypixelClientError as exc:
             await ctx.send(f"❌ {exc}")
             return

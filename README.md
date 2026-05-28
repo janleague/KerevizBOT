@@ -70,7 +70,7 @@ WELCOME_CHANNEL_ID=optional-welcome-channel-id
 LEAVES_LOG_CHANNEL_ID=optional-leaves-log-channel-id
 MESSAGES_LOG_CHANNEL_ID=optional-message-log-channel-id
 DELETED_IMAGE_LOG_CHANNEL_ID=optional-deleted-image-log-channel-id
-HYPIXEL_API_KEY=optional-hypixel-api-key
+HYPIXEL_API_KEY=optional-initial-hypixel-api-key
 POLLINATIONS_API_KEY=optional-pollinations-key
 GITHUB_URL=https://github.com/your-name/your-repo
 FIREBASE_CREDENTIALS_PATH=firebase-service-account.json
@@ -116,6 +116,10 @@ Guard settings store:
 Deleted image logging stores temporary metadata in:
 
 - `deleted_image_cache/{message_id}`
+
+Hypixel API configuration stores:
+
+- `bot_state/hypixel_api`
 
 Legacy local files such as `last_video_id.txt` and `invite_tracker.json` are migrated automatically when possible.
 The bundled `servers.txt` file is used as the initial seed list for Minecraft servers.
@@ -200,6 +204,7 @@ Deleted image files are cached locally in `deleted_image_cache/` until the delet
 - `!duels`
 - `!bedwars`
 - `!skywars`
+- `/hypixelapi` - Owner-only command to update the Hypixel API key.
 
 ## Security
 

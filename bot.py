@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from discord.ext import commands
 from discord import app_commands
 from services.blocked_commands import KEREVIZCRAFT_CATEGORY, KEREVIZCRAFT_COMMAND_NAMES
+from services.hypixel_key_store import HypixelAPIKeyStore
 from services.youtube_store import YouTubeAnnouncementStore
 
 # ===================== LOAD ENV =====================
@@ -69,6 +70,8 @@ slash_synced = False
 youtube_task: asyncio.Task | None = None
 announce_view_registered = False
 youtube_store = YouTubeAnnouncementStore()
+hypixel_key_store = HypixelAPIKeyStore()
+hypixel_api_key_loaded = False
 yt_feed_failure_count = 0
 yt_feed_last_error_key: str | None = None
 yt_feed_last_error_log_at = 0.0
@@ -108,6 +111,36 @@ async def send_log(message: str) -> None:
                 print("[WARNING] Missing perms to send logs.")
             except Exception as e:
                 print(f"[ERROR] Failed to send log: {e}")
+
+
+def _mask_api_key(api_key: str | None) -> str:
+    clean = (api_key or "").strip()
+    if not clean:
+        return "Not set"
+    if len(clean) <= 8:
+        return "*" * len(clean)
+    return f"{clean[:4]}...{clean[-4:]}"
+
+
+async def _load_hypixel_api_key_state() -> str:
+    global HYPIXEL_API_KEY
+
+    stored_key = await hypixel_key_store.load_api_key()
+    if stored_key:
+        HYPIXEL_API_KEY = stored_key
+        bot.HYPIXEL_API_KEY = stored_key
+        return "Firebase Firestore"
+
+    env_key = (HYPIXEL_API_KEY or "").strip()
+    if env_key:
+        await hypixel_key_store.save_api_key(env_key, "env-migration")
+        HYPIXEL_API_KEY = env_key
+        bot.HYPIXEL_API_KEY = env_key
+        return "environment migration"
+
+    HYPIXEL_API_KEY = None
+    bot.HYPIXEL_API_KEY = None
+    return "not configured"
 
 
 def human_time(seconds: float) -> str:
@@ -357,6 +390,35 @@ async def cmd_restart(ctx: commands.Context):
     await bot.close()
     sys.exit()
 cmd_restart.category = "Admin"
+
+
+@bot.tree.command(name="hypixelapi", description="Owner only: update the Hypixel API key.")
+@app_commands.describe(api_key="New Hypixel API key")
+async def hypixelapi(interaction: discord.Interaction, api_key: str):
+    global HYPIXEL_API_KEY
+
+    if not OWNER_ID or interaction.user.id != OWNER_ID:
+        return await interaction.response.send_message("You are not authorized to use this.", ephemeral=True)
+
+    clean_key = api_key.strip()
+    if len(clean_key) < 16 or any(char.isspace() for char in clean_key):
+        return await interaction.response.send_message("Invalid Hypixel API key format.", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=True)
+    try:
+        await hypixel_key_store.save_api_key(clean_key, interaction.user.id)
+    except Exception as exc:
+        await interaction.followup.send(f"Could not save the Hypixel API key: `{exc}`", ephemeral=True)
+        await send_log(f"[HYPIXEL] Failed to update API key via slash command: {exc}")
+        return
+
+    HYPIXEL_API_KEY = clean_key
+    bot.HYPIXEL_API_KEY = clean_key
+    await interaction.followup.send(
+        f"Hypixel API key updated and saved to Firebase: `{_mask_api_key(clean_key)}`",
+        ephemeral=True,
+    )
+    await send_log("[HYPIXEL] API key updated via /hypixelapi.")
 
 # ===================== GENERAL TEXT COMMANDS =====================
 class ChannelView(discord.ui.View):
@@ -647,10 +709,20 @@ async def youtube_loop():
 # ===================== EVENTS =====================
 @bot.event
 async def on_ready():
-    global extensions_loaded, slash_synced, youtube_task, announce_view_registered, last_video_id
+    global extensions_loaded, slash_synced, youtube_task, announce_view_registered, last_video_id, hypixel_api_key_loaded
 
     print(f"Logged in as: {bot.user}")
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="YouTube: @kerevizYT"))
+
+    if not hypixel_api_key_loaded:
+        try:
+            source = await _load_hypixel_api_key_state()
+            await send_log(f"[HYPIXEL] API key state ready ({source}).")
+        except Exception as exc:
+            bot.HYPIXEL_API_KEY = HYPIXEL_API_KEY
+            await send_log(f"[HYPIXEL] Could not load Firebase API key state: {exc}")
+        finally:
+            hypixel_api_key_loaded = True
 
     if last_video_id is None:
         try:

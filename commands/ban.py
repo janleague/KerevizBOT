@@ -56,6 +56,23 @@ class Moderation(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    async def _send_ban_dm(self, user: discord.User | discord.Member, guild: discord.Guild, reason: str) -> bool:
+        embed = discord.Embed(
+            title="You have been banned",
+            description=(
+                f"You have been banned from **{guild.name}**.\n\n"
+                f"Reason: {reason}"
+            ),
+            color=discord.Color.red(),
+        )
+        embed.set_footer(text="This message was sent before the ban was applied.")
+
+        try:
+            await user.send(embed=embed)
+            return True
+        except (discord.Forbidden, discord.HTTPException):
+            return False
+
     @app_commands.command(name="ban", description="Ban a member (optionally delete recent messages).")
     @app_commands.describe(
         member="The member to ban",
@@ -96,6 +113,8 @@ class Moderation(commands.Cog):
 
         # Discord API limitation: ban deletion max 7 days (we enforce 0-7 already)
         delete_seconds = int(delete_message_days) * 86400
+
+        await self._send_ban_dm(member, guild, reason)
 
         # Execute ban
         try:
@@ -155,6 +174,13 @@ class Moderation(commands.Cog):
             # If not found as member, try raw ID to ban someone not in the server
             try:
                 user_id = int(target)
+                user = None
+                try:
+                    user = await self.bot.fetch_user(user_id)
+                    await self._send_ban_dm(user, guild, reason)
+                except Exception:
+                    user = None
+
                 # Ban by Object (allows banning users who already left the server)
                 try:
                     await guild.ban(discord.Object(id=user_id), reason=reason, delete_message_seconds=0)
@@ -164,10 +190,9 @@ class Moderation(commands.Cog):
                     return await ctx.send("⛔ I don't have permission to ban that user.")
 
                 # Try to fetch user info for the embed
-                try:
-                    user = await self.bot.fetch_user(user_id)
+                if user:
                     display = f"{user.mention} (`{user}`)"
-                except Exception:
+                else:
                     display = f"`{user_id}`"
 
                 embed = discord.Embed(
@@ -197,6 +222,8 @@ class Moderation(commands.Cog):
         me = guild.me
         if me and member.top_role >= me.top_role:
             return await ctx.send("❌ I cannot ban that member because their role is higher or equal to mine.")
+
+        await self._send_ban_dm(member, guild, reason)
 
         try:
             await guild.ban(member, reason=reason, delete_message_seconds=0)

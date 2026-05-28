@@ -13,7 +13,6 @@ from services.hypixel_client import (
 class Bedwars(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.api_key = bot.HYPIXEL_API_KEY
 
     @commands.command(
         name="bedwars",
@@ -21,7 +20,7 @@ class Bedwars(commands.Cog):
     )
     async def bedwars(self, ctx, username):
         try:
-            bundle = await fetch_hypixel_player(self.api_key, username)
+            bundle = await fetch_hypixel_player(self.bot.HYPIXEL_API_KEY, username)
         except HypixelClientError as exc:
             await ctx.send(f"❌ {exc}")
             return

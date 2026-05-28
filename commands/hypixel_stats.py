@@ -27,12 +27,11 @@ RANK_COLORS = {
 class HypixelStats(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.api_key = bot.HYPIXEL_API_KEY
 
     @commands.command(name="hstats", aliases=["hypixel"], help="Show a player's general Hypixel profile stats.")
     async def hypixel_stats(self, ctx: commands.Context, username: str):
         try:
-            bundle = await fetch_hypixel_player(self.api_key, username)
+            bundle = await fetch_hypixel_player(self.bot.HYPIXEL_API_KEY, username)
         except HypixelClientError as exc:
             return await ctx.send(f"Error: {exc}")
 

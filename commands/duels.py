@@ -280,12 +280,11 @@ class DuelsView(discord.ui.View):
 class Duels(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.api_key = bot.HYPIXEL_API_KEY
 
     @commands.command(name="duels", aliases=["duel"], help="Show detailed Duels stats with a selectable mode menu.")
     async def duels(self, ctx: commands.Context, username: str):
         try:
-            bundle = await fetch_hypixel_player(self.api_key, username)
+            bundle = await fetch_hypixel_player(self.bot.HYPIXEL_API_KEY, username)
         except HypixelClientError as exc:
             return await ctx.send(f"Error: {exc}")
 
