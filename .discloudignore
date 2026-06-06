@@ -1,0 +1,13 @@
+.git/
+__pycache__/
+*.pyc
+*.pyo
+*.tmp
+*.broken-*
+*.migrated-*
+*.zip
+deleted_image_cache/
+discloud/
+node_modules/
+.venv/
+venv/

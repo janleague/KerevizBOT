@@ -89,6 +89,21 @@ firebase-service-account.json
 python bot.py
 ```
 
+## Discloud CLI
+
+Use the repo wrapper instead of calling `discloud` directly on Windows:
+
+```powershell
+.\discloud.ps1 user info
+.\discloud.ps1 app info
+.\discloud.ps1 app status <app_id>
+.\discloud.ps1 app upload
+```
+
+The wrapper reads the local Discloud login config from `C:\Users\janle\.discloud\.cli`,
+extracts the real token into `DISCLOUD_TOKEN` only for the child process, and avoids
+storing secrets in this repository.
+
 ## Firebase
 
 KerevizBOT uses Cloud Firestore for state that should survive restarts and deployments.
@@ -104,6 +119,10 @@ The invite tracker stores:
 - `invite_trackers/{guild_id}/invite_cache/{invite_code}`
 - `invite_trackers/{guild_id}/member_invites/{user_id}`
 - `invite_trackers/{guild_id}/member_joins/{member_id}`
+
+The giveaway system stores:
+
+- `giveaways/{giveaway_id}`
 
 The Minecraft server command stores:
 
@@ -121,7 +140,7 @@ Hypixel API configuration stores:
 
 - `bot_state/hypixel_api`
 
-Legacy local files such as `last_video_id.txt` and `invite_tracker.json` are migrated automatically when possible.
+Legacy local files such as `last_video_id.txt`, `invite_tracker.json`, and `giveaways.json` are migrated automatically when possible.
 The bundled `servers.txt` file is used as the initial seed list for Minecraft servers.
 Deleted image files are cached locally in `deleted_image_cache/` until the deleted-image log is sent.
 
@@ -141,6 +160,7 @@ Deleted image files are cached locally in `deleted_image_cache/` until the delet
 - `!unban`
 - `!a`
 - `!s`
+- `!clear <message count>`
 - `/ban`
 
 ### Giveaways

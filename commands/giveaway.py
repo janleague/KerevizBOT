@@ -12,6 +12,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from services.giveaway_store import GiveawayStore, normalize_record
+
 
 DATA_FILE = "giveaways.json"
 CHECK_INTERVAL = 20
@@ -127,8 +129,13 @@ class Giveaway(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._lock = asyncio.Lock()
-        self._giveaways: dict[str, dict[str, Any]] = self._load()
+        self.store = GiveawayStore()
+        self._giveaways: dict[str, dict[str, Any]] = {}
         self._runner: asyncio.Task | None = None
+
+    async def initialize(self) -> None:
+        self._giveaways = await self.store.load_all()
+        await self._migrate_legacy_file()
 
     def start_runner(self) -> None:
         if self._runner is None or self._runner.done():
@@ -279,7 +286,7 @@ class Giveaway(commands.Cog):
         record["message_id"] = message.id
         async with self._lock:
             self._giveaways[giveaway_id] = record
-            self._save()
+            await self._save_giveaway(record)
 
         await interaction.followup.send(
             f"Giveaway created in {target_channel.mention}: {message.jump_url}",
@@ -346,7 +353,7 @@ class Giveaway(commands.Cog):
             stored["winner_announcement_sent"] = False
             stored["rerolled_at"] = now_ts()
             stored["rerolled_by_id"] = interaction.user.id
-            self._save()
+            await self._save_giveaway(stored)
             updated = dict(stored)
 
         await self._update_message(updated)
@@ -375,7 +382,7 @@ class Giveaway(commands.Cog):
             stored["status"] = "cancelled"
             stored["ended_at"] = now_ts()
             stored["cancelled_by_id"] = interaction.user.id
-            self._save()
+            await self._save_giveaway(stored)
             updated = dict(stored)
 
         await self._update_message(updated)
@@ -403,7 +410,7 @@ class Giveaway(commands.Cog):
             if not stored:
                 return await interaction.followup.send("I could not find that giveaway anymore.", ephemeral=True)
             del self._giveaways[record["id"]]
-            self._save()
+            await self.store.delete_giveaway(record["id"])
 
         await interaction.followup.send("Giveaway permanently deleted from storage.", ephemeral=True)
 
@@ -489,7 +496,7 @@ class Giveaway(commands.Cog):
                 entrants.append(user_id)
                 action_text = "You are now entered in the giveaway."
             record["entrants"] = entrants
-            self._save()
+            await self._save_giveaway(record)
             updated = dict(record)
 
         try:
@@ -527,7 +534,7 @@ class Giveaway(commands.Cog):
                 record["ended_at"] = now_ts()
                 if ended_by:
                     record["ended_by_id"] = ended_by
-                self._save()
+                await self._save_giveaway(record)
             snapshot = dict(record)
 
         winners = await self._draw_winners(snapshot, winner_count=winner_count)
@@ -542,7 +549,7 @@ class Giveaway(commands.Cog):
             if winner_count is not None:
                 record["winners_count"] = winner_count
             record["ended_at"] = record.get("ended_at") or now_ts()
-            self._save()
+            await self._save_giveaway(record)
             final_record = dict(record)
 
         await self._update_message(final_record)
@@ -565,7 +572,7 @@ class Giveaway(commands.Cog):
             record = self._giveaways.get(giveaway_id)
             if record:
                 record["winner_announcement_sent"] = True
-                self._save()
+                await self._save_giveaway(record)
 
     async def _draw_winners(
         self,
@@ -759,7 +766,13 @@ class Giveaway(commands.Cog):
             if giveaway_id not in self._giveaways:
                 return giveaway_id
 
-    def _load(self) -> dict[str, dict[str, Any]]:
+    async def _save_giveaway(self, record: dict[str, Any]) -> None:
+        snapshot = normalize_record(record)
+        giveaway_id = str(snapshot["id"])
+        self._giveaways[giveaway_id] = snapshot
+        await self.store.save_giveaway(snapshot)
+
+    def _load_legacy_file(self) -> dict[str, dict[str, Any]]:
         if not os.path.exists(DATA_FILE):
             return {}
         try:
@@ -776,12 +789,28 @@ class Giveaway(commands.Cog):
                 pass
         return {}
 
-    def _save(self) -> None:
-        payload = {"version": 1, "giveaways": self._giveaways}
-        temp_file = f"{DATA_FILE}.tmp"
-        with open(temp_file, "w", encoding="utf-8") as file:
-            json.dump(payload, file, ensure_ascii=True, indent=2, sort_keys=True)
-        os.replace(temp_file, DATA_FILE)
+    async def _migrate_legacy_file(self) -> None:
+        legacy_giveaways = self._load_legacy_file()
+        if not legacy_giveaways:
+            return
+
+        migrated = 0
+        async with self._lock:
+            for key, record in legacy_giveaways.items():
+                if not isinstance(record, dict):
+                    continue
+                record["id"] = str(record.get("id") or key)
+                if record["id"] in self._giveaways:
+                    continue
+                await self._save_giveaway(record)
+                migrated += 1
+
+        if migrated:
+            migrated_name = f"{DATA_FILE}.migrated-{int(time.time())}"
+            try:
+                os.replace(DATA_FILE, migrated_name)
+            except OSError:
+                pass
 
     async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.MissingPermissions):
@@ -804,6 +833,7 @@ class Giveaway(commands.Cog):
 
 async def setup(bot: commands.Bot):
     cog = Giveaway(bot)
+    await cog.initialize()
     await bot.add_cog(cog)
     bot.add_view(GiveawayJoinView(cog))
     cog.start_runner()

@@ -4,6 +4,7 @@ import random
 import aiohttp  # For fetching jokes and memes from APIs
 
 HTTP_TIMEOUT = aiohttp.ClientTimeout(total=10)
+CAT_API_URL = "https://api.thecatapi.com/v1/images/search?limit=1&mime_types=jpg,png"
 
 class Fun(commands.Cog):
     """Fun commands for entertainment."""
@@ -75,6 +76,30 @@ class Fun(commands.Cog):
             await ctx.send("❌ An error occurred while fetching a meme.")
             print(f"[ERROR] meme command: {e}")
 
+    @commands.command(name="cat", aliases=["kitty"], help="Fetches a random cute cat photo.")
+    async def cat(self, ctx: commands.Context):
+        try:
+            async with aiohttp.ClientSession(timeout=HTTP_TIMEOUT) as session:
+                async with session.get(CAT_API_URL) as response:
+                    if response.status != 200:
+                        return await ctx.send("❌ Failed to fetch a cat. Please try again later.")
+                    data = await response.json()
+
+            if not data or not isinstance(data, list) or not data[0].get("url"):
+                return await ctx.send("❌ Could not find a cat photo right now. Please try again later.")
+
+            embed = discord.Embed(
+                title="🐱 Random Cat",
+                description="Here is a tiny dose of cuteness for you.",
+                color=discord.Color.orange(),
+            )
+            embed.set_image(url=data[0]["url"])
+            embed.set_footer(text="Powered by TheCatAPI")
+            await ctx.send(embed=embed)
+        except Exception as e:
+            await ctx.send("❌ An error occurred while fetching a cat.")
+            print(f"[ERROR] cat command: {e}")
+
     # ------------------------------------------------------------------
     # Error handler for fun commands
     # ------------------------------------------------------------------
@@ -99,6 +124,10 @@ class Fun(commands.Cog):
     @meme.error
     async def meme_error(self, ctx: commands.Context, error: commands.CommandError):
         await ctx.send("❌ An error occurred while fetching a meme.")
+
+    @cat.error
+    async def cat_error(self, ctx: commands.Context, error: commands.CommandError):
+        await ctx.send("❌ An error occurred while fetching a cat.")
 
 # ----------------------------------------------------------------------
 # Setup

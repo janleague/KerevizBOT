@@ -4,7 +4,9 @@ __pycache__/
 *.py[cod]
 last_video_id.txt
 invite_tracker.json
+giveaways.json
 deleted_image_cache/
+discloud/
 *.tmp
 *.broken-*
 *.migrated-*
