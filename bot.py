@@ -14,6 +14,7 @@ from discord import app_commands
 from services.blocked_commands import KEREVIZCRAFT_CATEGORY, KEREVIZCRAFT_COMMAND_NAMES
 from services.hypixel_key_store import HypixelAPIKeyStore
 from services.youtube_store import YouTubeAnnouncementStore
+from services.youtube_utils import normalize_youtube_video_id
 
 # ===================== LOAD ENV =====================
 load_dotenv()
@@ -166,12 +167,18 @@ def _state_storage_label() -> str:
 
 
 async def _load_last_video_state() -> str | None:
-    return await youtube_store.migrate_from_file(LAST_VIDEO_FILE)
+    stored_video_id = await youtube_store.migrate_from_file(LAST_VIDEO_FILE)
+    normalized_video_id = normalize_youtube_video_id(stored_video_id)
+    if stored_video_id and normalized_video_id and normalized_video_id != stored_video_id:
+        await youtube_store.acknowledge_video(normalized_video_id)
+        await send_log(f"[YT] Normalized stored last_video_id to {normalized_video_id}.")
+        return normalized_video_id
+    return stored_video_id
 
 
 async def _persist_last_video_state(vid: str | None) -> None:
     if vid:
-        await youtube_store.set_last_video_id(vid)
+        await youtube_store.acknowledge_video(vid)
 
 
 def _extract_youtube_channel_id(source: str | None) -> str | None:
@@ -302,6 +309,13 @@ async def _announce_video_once(channel, video_id: str, link: str, log_prefix: st
 
     if video_id == last_video_id:
         return False
+
+    loaded_state = await _load_last_video_state()
+    if loaded_state:
+        last_video_id = loaded_state
+        if video_id == last_video_id:
+            await send_log(f"[YT] Persistent last_video_id prevented announcement for {video_id}.")
+            return False
 
     channel_id = getattr(channel, "id", None)
     if not await youtube_store.claim_video(video_id, channel_id):
@@ -615,17 +629,20 @@ async def announce(interaction: discord.Interaction, action: str, value: str | N
     if action == "set_last":
         if not value:
             return await interaction.response.send_message("Provide a video ID or link.", ephemeral=True)
-        # Accept full URL or raw ID
-        if "watch?v=" in value:
-            vid = value.split("watch?v=")[-1].split("&")[0]
-        elif "/shorts/" in value:
-            vid = value.split("/shorts/")[-1].split("?")[0]
-        else:
-            vid = value.strip()
+        vid = normalize_youtube_video_id(value)
+        if not vid:
+            return await interaction.response.send_message(
+                "Invalid YouTube video ID or link. Use a video ID, watch URL, Shorts URL, Live URL, Embed URL, or youtu.be link.",
+                ephemeral=True,
+            )
         last_video_id = vid
-        await _persist_last_video_state(vid)
+        await youtube_store.acknowledge_video(
+            vid,
+            DISCORD_CHANNEL_ID,
+            getattr(interaction.user, "id", None),
+        )
         await interaction.response.send_message(f"✅ last_video_id set to `{last_video_id}`.", ephemeral=True)
-        await send_log(f"[CONFIG] last_video_id manually set to {last_video_id}")
+        await send_log(f"[CONFIG] last_video_id manually acknowledged as {last_video_id}")
         return
 
     if action == "force_check":

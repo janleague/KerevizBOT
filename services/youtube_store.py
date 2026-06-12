@@ -6,6 +6,8 @@ from services.firebase_client import get_firestore_client, get_firestore_module,
 
 
 class YouTubeAnnouncementStore:
+    FINAL_STATUSES = {"sent", "manually_acknowledged"}
+
     def __init__(self, stale_seconds: int = 300):
         self.stale_seconds = stale_seconds
 
@@ -53,6 +55,47 @@ class YouTubeAnnouncementStore:
             merge=True,
         )
 
+    async def acknowledge_video(
+        self,
+        video_id: str,
+        channel_id: int | None = None,
+        actor_id: int | None = None,
+    ) -> None:
+        await run_firestore(self._acknowledge_video_sync, video_id, channel_id, actor_id)
+
+    def _acknowledge_video_sync(
+        self,
+        video_id: str,
+        channel_id: int | None = None,
+        actor_id: int | None = None,
+    ) -> None:
+        db = get_firestore_client()
+        firestore = get_firestore_module()
+        batch = db.batch()
+        batch.set(
+            self._state_ref(),
+            {
+                "last_video_id": video_id,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+        batch.set(
+            self._announcement_ref(video_id),
+            {
+                "video_id": video_id,
+                "status": "manually_acknowledged",
+                "channel_id": str(channel_id) if channel_id else None,
+                "message_id": None,
+                "acknowledged_by": str(actor_id) if actor_id else None,
+                "acknowledged_at": firestore.SERVER_TIMESTAMP,
+                "error": None,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+        batch.commit()
+
     async def migrate_from_file(self, path: str) -> str | None:
         existing = await self.load_last_video_id()
         if existing or not os.path.isfile(path):
@@ -89,7 +132,7 @@ class YouTubeAnnouncementStore:
             if snapshot.exists:
                 data = snapshot.to_dict() or {}
                 status = data.get("status")
-                if status == "sent":
+                if status in self.FINAL_STATUSES:
                     return False
                 if status == "pending" and not self._pending_claim_is_stale(data.get("claimed_at")):
                     return False
