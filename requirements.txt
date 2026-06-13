@@ -3,3 +3,4 @@ psutil
 aiohttp
 python-dotenv
 firebase-admin
+Pillow
