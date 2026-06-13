@@ -162,6 +162,31 @@ def progress_bar(pct: float, width: int = 12) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
+def _total_member_count() -> int:
+    return sum(
+        guild.member_count if guild.member_count is not None else len(guild.members)
+        for guild in bot.guilds
+    )
+
+
+def _member_presence_text() -> str:
+    member_count = _total_member_count()
+    label = "member" if member_count == 1 else "members"
+    return f"{member_count:,} {label}"
+
+
+async def _update_member_presence() -> None:
+    try:
+        await bot.change_presence(
+            activity=discord.Activity(
+                type=discord.ActivityType.watching,
+                name=_member_presence_text(),
+            )
+        )
+    except Exception as exc:
+        print(f"[PRESENCE ERROR] Could not update member presence: {exc}")
+
+
 def _state_storage_label() -> str:
     return youtube_store.storage_label
 
@@ -729,7 +754,7 @@ async def on_ready():
     global extensions_loaded, slash_synced, youtube_task, announce_view_registered, last_video_id, hypixel_api_key_loaded
 
     print(f"Logged in as: {bot.user}")
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="YouTube: @kerevizYT"))
+    await _update_member_presence()
 
     if not hypixel_api_key_loaded:
         try:
@@ -790,6 +815,8 @@ async def on_ready():
 
 @bot.event
 async def on_member_join(member: discord.Member):
+    await _update_member_presence()
+
     channel = bot.get_channel(WELCOME_CHANNEL_ID) if WELCOME_CHANNEL_ID else None
     if channel:
         e = discord.Embed(
@@ -854,6 +881,8 @@ async def on_message_delete(message: discord.Message):
 
 @bot.event
 async def on_member_remove(member: discord.Member):
+    await _update_member_presence()
+
     ch = bot.get_channel(LEAVES_LOG_CHANNEL_ID) if LEAVES_LOG_CHANNEL_ID else None
     if not ch:
         return
