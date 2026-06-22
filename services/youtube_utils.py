@@ -1,8 +1,16 @@
+import json
 import re
 from urllib.parse import parse_qs, urlparse
 
 
 YOUTUBE_VIDEO_ID_RE = re.compile(r"^[0-9A-Za-z_-]{11}$")
+YOUTUBE_SUBSCRIBER_PATTERNS = (
+    re.compile(r'"subscriberCountText"\s*:\s*"((?:\\.|[^"])*)"', re.IGNORECASE),
+    re.compile(
+        r'"content"\s*:\s*"((?:\\.|[^"])*)"\s*}\s*,\s*"accessibilityLabel"\s*:\s*"[^"]*subscribers?"',
+        re.IGNORECASE,
+    ),
+)
 
 
 def normalize_youtube_video_id(value: str | None) -> str | None:
@@ -34,4 +42,24 @@ def normalize_youtube_video_id(value: str | None) -> str | None:
 
     if candidate and YOUTUBE_VIDEO_ID_RE.fullmatch(candidate):
         return candidate
+    return None
+
+
+def extract_youtube_subscriber_count(page_text: str | None) -> str | None:
+    if not page_text:
+        return None
+
+    for pattern in YOUTUBE_SUBSCRIBER_PATTERNS:
+        match = pattern.search(page_text)
+        if not match:
+            continue
+
+        try:
+            label = json.loads(f'"{match.group(1)}"')
+        except json.JSONDecodeError:
+            label = match.group(1)
+
+        count_match = re.fullmatch(r"\s*(.+?)\s+subscribers?\s*", label, re.IGNORECASE)
+        if count_match:
+            return count_match.group(1).strip()
     return None

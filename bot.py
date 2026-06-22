@@ -14,7 +14,7 @@ from discord import app_commands
 from services.blocked_commands import KEREVIZCRAFT_CATEGORY, KEREVIZCRAFT_COMMAND_NAMES
 from services.hypixel_key_store import HypixelAPIKeyStore
 from services.youtube_store import YouTubeAnnouncementStore
-from services.youtube_utils import normalize_youtube_video_id
+from services.youtube_utils import extract_youtube_subscriber_count, normalize_youtube_video_id
 
 # ===================== LOAD ENV =====================
 load_dotenv()
@@ -34,6 +34,7 @@ POLLINATIONS_API_KEY    = os.getenv("POLLINATIONS_API_KEY")
 
 # ===================== CONFIG =====================
 ANNOUNCE_INTERVAL = 900  # seconds between YouTube feed checks
+PRESENCE_REFRESH_INTERVAL = 900
 LAST_VIDEO_FILE   = "last_video_id.txt"
 YOUTUBE_URL       = "https://www.youtube.com/@kerevizYT"
 
@@ -47,6 +48,14 @@ YT_HANDLE_RE = re.compile(r"(?:youtube\.com/)?(@[A-Za-z0-9._-]+)", re.IGNORECASE
 YT_FEED_HEADERS = {
     "User-Agent": "KerevizBOT/1.0 (+https://github.com/janleague/KerevizBOT)",
     "Accept": "application/atom+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5",
+}
+YT_PAGE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
 }
 YT_FEED_TIMEOUT = aiohttp.ClientTimeout(total=15)
 YT_FEED_MAX_ATTEMPTS = 3
@@ -69,6 +78,7 @@ last_video_id    = None
 extensions_loaded = False
 slash_synced = False
 youtube_task: asyncio.Task | None = None
+presence_task: asyncio.Task | None = None
 announce_view_registered = False
 youtube_store = YouTubeAnnouncementStore()
 hypixel_key_store = HypixelAPIKeyStore()
@@ -76,6 +86,7 @@ hypixel_api_key_loaded = False
 yt_feed_failure_count = 0
 yt_feed_last_error_key: str | None = None
 yt_feed_last_error_log_at = 0.0
+youtube_subscriber_count = "..."
 
 
 def remove_kerevizcraft_commands() -> list[str]:
@@ -172,7 +183,7 @@ def _total_member_count() -> int:
 def _member_presence_text() -> str:
     member_count = _total_member_count()
     label = "member" if member_count == 1 else "members"
-    return f"{member_count:,} {label}"
+    return f"{member_count:,} {label} | {youtube_subscriber_count} subscribers"
 
 
 async def _update_member_presence() -> None:
@@ -185,6 +196,36 @@ async def _update_member_presence() -> None:
         )
     except Exception as exc:
         print(f"[PRESENCE ERROR] Could not update member presence: {exc}")
+
+
+async def _fetch_youtube_subscriber_count() -> str | None:
+    try:
+        async with aiohttp.ClientSession(headers=YT_PAGE_HEADERS) as session:
+            async with session.get(f"{YOUTUBE_URL}?hl=en", timeout=YT_FEED_TIMEOUT) as response:
+                if response.status != 200:
+                    print(f"[PRESENCE] YouTube channel page returned HTTP {response.status}.")
+                    return None
+                return extract_youtube_subscriber_count(await response.text())
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        print(f"[PRESENCE] Could not fetch YouTube subscribers: {type(exc).__name__}")
+        return None
+
+
+async def presence_loop() -> None:
+    global youtube_subscriber_count
+
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        subscriber_count = await _fetch_youtube_subscriber_count()
+        if subscriber_count:
+            changed = subscriber_count != youtube_subscriber_count
+            youtube_subscriber_count = subscriber_count
+            await _update_member_presence()
+            if changed:
+                await send_log(f"[PRESENCE] Updated to {_member_presence_text()}.")
+        else:
+            await _update_member_presence()
+        await asyncio.sleep(PRESENCE_REFRESH_INTERVAL)
 
 
 def _state_storage_label() -> str:
@@ -751,7 +792,8 @@ async def youtube_loop():
 # ===================== EVENTS =====================
 @bot.event
 async def on_ready():
-    global extensions_loaded, slash_synced, youtube_task, announce_view_registered, last_video_id, hypixel_api_key_loaded
+    global extensions_loaded, slash_synced, youtube_task, presence_task
+    global announce_view_registered, last_video_id, hypixel_api_key_loaded
 
     print(f"Logged in as: {bot.user}")
     await _update_member_presence()
@@ -811,6 +853,8 @@ async def on_ready():
 
     if youtube_task is None or youtube_task.done():
         youtube_task = asyncio.create_task(youtube_loop())
+    if presence_task is None or presence_task.done():
+        presence_task = asyncio.create_task(presence_loop())
 
 
 @bot.event

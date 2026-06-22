@@ -1,6 +1,6 @@
 import unittest
 
-from services.youtube_utils import normalize_youtube_video_id
+from services.youtube_utils import extract_youtube_subscriber_count, normalize_youtube_video_id
 
 
 class NormalizeYoutubeVideoIdTests(unittest.TestCase):
@@ -33,6 +33,22 @@ class NormalizeYoutubeVideoIdTests(unittest.TestCase):
         for value in (None, "", "not a video", "https://youtube.com/@kerevizYT"):
             with self.subTest(value=value):
                 self.assertIsNone(normalize_youtube_video_id(value))
+
+
+class ExtractYoutubeSubscriberCountTests(unittest.TestCase):
+    def test_extracts_current_channel_page_shape(self):
+        page = '"subscriberCountText":"992 subscribers","viewCountText":"143,456 views"'
+        self.assertEqual(extract_youtube_subscriber_count(page), "992")
+
+    def test_extracts_metadata_content_shape(self):
+        page = (
+            '"metadataParts":[{"text":{"content":"1.24K subscribers"},'
+            '"accessibilityLabel":"1.24K subscribers"}}]'
+        )
+        self.assertEqual(extract_youtube_subscriber_count(page), "1.24K")
+
+    def test_returns_none_when_subscriber_count_is_missing(self):
+        self.assertIsNone(extract_youtube_subscriber_count('{"title":"Kereviz"}'))
 
 
 if __name__ == "__main__":
