@@ -134,6 +134,23 @@ def format_participants_preview(raw_entrants: list[Any] | tuple[Any, ...] | None
     return "\n".join(lines), total, truncated
 
 
+def participant_pages(raw_entrants: list[Any] | tuple[Any, ...] | None) -> tuple[list[str], int]:
+    entrant_ids = normalize_entrant_ids(raw_entrants)
+    total = len(entrant_ids)
+    if not entrant_ids:
+        return ["No participants yet."], 0
+
+    pages: list[str] = []
+    for start in range(0, total, PARTICIPANT_PREVIEW_LIMIT):
+        chunk = entrant_ids[start : start + PARTICIPANT_PREVIEW_LIMIT]
+        lines = [
+            f"`{index}.` <@{user_id}> (`{user_id}`)"
+            for index, user_id in enumerate(chunk, start=start + 1)
+        ]
+        pages.append("\n".join(lines))
+    return pages, total
+
+
 class GiveawayJoinView(discord.ui.View):
     def __init__(self, cog: "Giveaway"):
         super().__init__(timeout=None)
@@ -160,6 +177,60 @@ class GiveawayEndedView(discord.ui.View):
     @discord.ui.button(label="Participants", style=discord.ButtonStyle.secondary, custom_id=ENDED_PARTICIPANTS_CUSTOM_ID)
     async def participants(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_participants(interaction)
+
+
+class GiveawayParticipantsView(discord.ui.View):
+    def __init__(self, cog: "Giveaway", record: dict[str, Any], requester_id: int):
+        super().__init__(timeout=180)
+        self.cog = cog
+        self.record = dict(record)
+        self.requester_id = requester_id
+        self.pages, self.total = participant_pages(record.get("entrants", []))
+        self.page_index = 0
+        self._update_buttons()
+
+    @property
+    def needs_pagination(self) -> bool:
+        return len(self.pages) > 1
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.requester_id:
+            return True
+        await interaction.response.send_message("This participant list is not yours.", ephemeral=True)
+        return False
+
+    def _update_buttons(self) -> None:
+        self.previous_page.disabled = self.page_index <= 0
+        self.next_page.disabled = self.page_index >= len(self.pages) - 1
+
+    def embed(self) -> discord.Embed:
+        status = str(self.record.get("status", "active")).title()
+        embed = discord.Embed(
+            title=f"Participants: {self.record.get('prize', 'Unknown Prize')}",
+            description=self.pages[self.page_index],
+            color=int(self.record.get("color") or DEFAULT_COLOR),
+            timestamp=discord.utils.utcnow(),
+        )
+        embed.add_field(name="Total Entries", value=str(self.total), inline=True)
+        embed.add_field(name="Status", value=status, inline=True)
+        embed.add_field(name="Giveaway ID", value=f"`{self.record.get('id', 'unknown')}`", inline=True)
+        if self.needs_pagination:
+            embed.set_footer(text=f"Page {self.page_index + 1}/{len(self.pages)}")
+        else:
+            embed.set_footer(text="Participants are shown privately to you.")
+        return embed
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary)
+    async def previous_page(self, interaction: discord.Interaction, button: discord.ui.Button):  # noqa: ARG002
+        self.page_index = max(0, self.page_index - 1)
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self.embed(), view=self)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary)
+    async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):  # noqa: ARG002
+        self.page_index = min(len(self.pages) - 1, self.page_index + 1)
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self.embed(), view=self)
 
 
 class Giveaway(commands.Cog):
@@ -554,8 +625,10 @@ class Giveaway(commands.Cog):
         if not record:
             return await interaction.response.send_message("I could not find this giveaway.", ephemeral=True)
 
+        view = GiveawayParticipantsView(self, record, interaction.user.id)
         await interaction.response.send_message(
-            embed=self._participants_embed(record),
+            embed=view.embed(),
+            view=view if view.needs_pagination else None,
             ephemeral=True,
             allowed_mentions=discord.AllowedMentions.none(),
         )
@@ -804,22 +877,7 @@ class Giveaway(commands.Cog):
         return embed
 
     def _participants_embed(self, record: dict[str, Any]) -> discord.Embed:
-        participant_text, total, truncated = format_participants_preview(record.get("entrants", []))
-        status = str(record.get("status", "active")).title()
-        embed = discord.Embed(
-            title=f"Participants: {record.get('prize', 'Unknown Prize')}",
-            description=participant_text,
-            color=int(record.get("color") or DEFAULT_COLOR),
-            timestamp=discord.utils.utcnow(),
-        )
-        embed.add_field(name="Total Entries", value=str(total), inline=True)
-        embed.add_field(name="Status", value=status, inline=True)
-        embed.add_field(name="Giveaway ID", value=f"`{record.get('id', 'unknown')}`", inline=True)
-        if truncated:
-            embed.set_footer(text=f"Showing first {PARTICIPANT_PREVIEW_LIMIT} participants.")
-        else:
-            embed.set_footer(text="Participants are shown privately to you.")
-        return embed
+        return GiveawayParticipantsView(self, record, requester_id=0).embed()
 
     def _find_giveaway(self, identifier: str, guild_id: int | None = None) -> dict[str, Any] | None:
         ident = identifier.strip()
