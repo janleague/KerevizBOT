@@ -6,7 +6,8 @@ from services.firebase_client import get_firestore_client, get_firestore_module,
 
 
 class YouTubeAnnouncementStore:
-    FINAL_STATUSES = {"sent", "manually_acknowledged"}
+    # Once a send attempt is claimed, automatic retries are blocked to avoid duplicate @everyone pings.
+    FINAL_STATUSES = {"pending", "sent", "manually_acknowledged", "failed", "send_failed"}
 
     def __init__(self, stale_seconds: int = 300):
         self.stale_seconds = stale_seconds
@@ -134,8 +135,6 @@ class YouTubeAnnouncementStore:
                 status = data.get("status")
                 if status in self.FINAL_STATUSES:
                     return False
-                if status == "pending" and not self._pending_claim_is_stale(data.get("claimed_at")):
-                    return False
 
             transaction.set(
                 ref,
@@ -193,8 +192,9 @@ class YouTubeAnnouncementStore:
         self._announcement_ref(video_id).set(
             {
                 "video_id": video_id,
-                "status": "failed",
+                "status": "send_failed",
                 "error": error[:500],
+                "failed_at": firestore.SERVER_TIMESTAMP,
                 "updated_at": firestore.SERVER_TIMESTAMP,
             },
             merge=True,

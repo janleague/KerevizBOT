@@ -391,14 +391,24 @@ async def _announce_video_once(channel, video_id: str, link: str, log_prefix: st
         await send_log(f"[YT] Duplicate announcement prevented for {video_id}.")
         return False
 
+    loaded_state = await _load_last_video_state()
+    if loaded_state:
+        last_video_id = loaded_state
+        if video_id == last_video_id:
+            await send_log(f"[YT] Final pre-send state check prevented announcement for {video_id}.")
+            return False
+
+    last_video_id = video_id
     try:
-        message = await channel.send(f"@everyone 📢 A new video has just been uploaded!\n{link}")
+        message = await channel.send(
+            f"@everyone 📢 A new video has just been uploaded!\n{link}",
+            allowed_mentions=discord.AllowedMentions(everyone=True, users=False, roles=False),
+        )
     except Exception as exc:
         await youtube_store.mark_failed(video_id, str(exc))
         raise
 
     await youtube_store.mark_sent(video_id, channel_id, getattr(message, "id", None))
-    last_video_id = video_id
     await send_log(f"{log_prefix} {video_id}")
     return True
 

@@ -21,6 +21,9 @@ MIN_DURATION_SECONDS = 60
 MAX_DURATION_SECONDS = 90 * 24 * 60 * 60
 DEFAULT_COLOR = discord.Color.green().value
 DURATION_RE = re.compile(r"(\d+)\s*([smhdw])", re.IGNORECASE)
+PARTICIPANT_PREVIEW_LIMIT = 50
+ACTIVE_PARTICIPANTS_CUSTOM_ID = "kereviz_giveaway_participants_active"
+ENDED_PARTICIPANTS_CUSTOM_ID = "kereviz_giveaway_participants_ended"
 
 COLOR_NAMES = {
     "green": discord.Color.green().value,
@@ -102,6 +105,35 @@ def valid_url(value: str | None) -> str | None:
     raise ValueError("Image URLs must start with http:// or https://.")
 
 
+def normalize_entrant_ids(raw_entrants: list[Any] | tuple[Any, ...] | None) -> list[int]:
+    entrant_ids: list[int] = []
+    seen: set[int] = set()
+    for entry in raw_entrants or []:
+        try:
+            user_id = int(entry)
+        except (TypeError, ValueError):
+            continue
+        if user_id in seen:
+            continue
+        entrant_ids.append(user_id)
+        seen.add(user_id)
+    return entrant_ids
+
+
+def format_participants_preview(raw_entrants: list[Any] | tuple[Any, ...] | None) -> tuple[str, int, bool]:
+    entrant_ids = normalize_entrant_ids(raw_entrants)
+    total = len(entrant_ids)
+    if not entrant_ids:
+        return "No participants yet.", 0, False
+
+    preview = entrant_ids[:PARTICIPANT_PREVIEW_LIMIT]
+    lines = [f"`{index}.` <@{user_id}> (`{user_id}`)" for index, user_id in enumerate(preview, start=1)]
+    truncated = total > len(preview)
+    if truncated:
+        lines.append(f"...and `{total - len(preview)}` more participant(s).")
+    return "\n".join(lines), total, truncated
+
+
 class GiveawayJoinView(discord.ui.View):
     def __init__(self, cog: "Giveaway"):
         super().__init__(timeout=None)
@@ -111,14 +143,23 @@ class GiveawayJoinView(discord.ui.View):
     async def enter(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_entry(interaction)
 
+    @discord.ui.button(label="Participants", style=discord.ButtonStyle.secondary, custom_id=ACTIVE_PARTICIPANTS_CUSTOM_ID)
+    async def participants(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.handle_participants(interaction)
+
 
 class GiveawayEndedView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, cog: "Giveaway"):
         super().__init__(timeout=None)
+        self.cog = cog
 
     @discord.ui.button(label="Giveaway Ended", style=discord.ButtonStyle.secondary, custom_id="kereviz_giveaway_closed", disabled=True)
     async def closed(self, interaction: discord.Interaction, button: discord.ui.Button):
         pass
+
+    @discord.ui.button(label="Participants", style=discord.ButtonStyle.secondary, custom_id=ENDED_PARTICIPANTS_CUSTOM_ID)
+    async def participants(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.handle_participants(interaction)
 
 
 class Giveaway(commands.Cog):
@@ -505,6 +546,20 @@ class Giveaway(commands.Cog):
             pass
         await interaction.followup.send(action_text, ephemeral=True)
 
+    async def handle_participants(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild or not interaction.message:
+            return await interaction.response.send_message("This giveaway is not available here.", ephemeral=True)
+
+        record = self._find_giveaway(str(interaction.message.id), interaction.guild.id)
+        if not record:
+            return await interaction.response.send_message("I could not find this giveaway.", ephemeral=True)
+
+        await interaction.response.send_message(
+            embed=self._participants_embed(record),
+            ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
     async def _run_due_giveaways(self) -> None:
         await self.bot.wait_until_ready()
         while not self.bot.is_closed():
@@ -627,7 +682,7 @@ class Giveaway(commands.Cog):
 
         try:
             message = await channel.fetch_message(int(record["message_id"]))
-            view = GiveawayJoinView(self) if record.get("status") == "active" else GiveawayEndedView()
+            view = GiveawayJoinView(self) if record.get("status") == "active" else GiveawayEndedView(self)
             await message.edit(embed=self._build_embed(record), view=view)
         except discord.HTTPException:
             return
@@ -748,6 +803,24 @@ class Giveaway(commands.Cog):
         embed.set_footer(text=footer)
         return embed
 
+    def _participants_embed(self, record: dict[str, Any]) -> discord.Embed:
+        participant_text, total, truncated = format_participants_preview(record.get("entrants", []))
+        status = str(record.get("status", "active")).title()
+        embed = discord.Embed(
+            title=f"Participants: {record.get('prize', 'Unknown Prize')}",
+            description=participant_text,
+            color=int(record.get("color") or DEFAULT_COLOR),
+            timestamp=discord.utils.utcnow(),
+        )
+        embed.add_field(name="Total Entries", value=str(total), inline=True)
+        embed.add_field(name="Status", value=status, inline=True)
+        embed.add_field(name="Giveaway ID", value=f"`{record.get('id', 'unknown')}`", inline=True)
+        if truncated:
+            embed.set_footer(text=f"Showing first {PARTICIPANT_PREVIEW_LIMIT} participants.")
+        else:
+            embed.set_footer(text="Participants are shown privately to you.")
+        return embed
+
     def _find_giveaway(self, identifier: str, guild_id: int | None = None) -> dict[str, Any] | None:
         ident = identifier.strip()
         record = self._giveaways.get(ident)
@@ -836,6 +909,7 @@ async def setup(bot: commands.Bot):
     await cog.initialize()
     await bot.add_cog(cog)
     bot.add_view(GiveawayJoinView(cog))
+    bot.add_view(GiveawayEndedView(cog))
     cog.start_runner()
     guide = bot.get_command("giveaway")
     if guide:
