@@ -163,6 +163,8 @@ Deleted image files are cached locally in `deleted_image_cache/` until the delet
 - `!clear <message count>`
 - `/ban`
 - `/timeout`
+- `/clear`
+- `/nuke`
 
 ### Giveaways
 
