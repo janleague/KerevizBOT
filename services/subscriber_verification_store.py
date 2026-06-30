@@ -91,6 +91,12 @@ class SubscriberVerificationStore:
             merge=True,
         )
 
+    async def delete_request(self, request_id: int | str) -> None:
+        await run_firestore(self._delete_request_sync, str(request_id))
+
+    def _delete_request_sync(self, request_id: str) -> None:
+        self._request_ref(request_id).delete()
+
     async def load_all_panels(self) -> dict[int, dict[str, Any]]:
         return await run_firestore(self._load_all_panels_sync)
 

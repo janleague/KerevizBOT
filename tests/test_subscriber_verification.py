@@ -1,12 +1,14 @@
 import unittest
 
 from commands.subscriber_verification import (
+    REQUEST_RETENTION_SECONDS,
     SubscriberVerification,
     SUBMISSION_COOLDOWN_SECONDS,
     YOUTUBE_CHANNEL_URL,
     format_cooldown,
     is_supported_image_file,
     seconds_until_next_submission,
+    should_delete_request,
     valid_http_url,
 )
 from services.subscriber_verification_store import normalize_panel, normalize_request
@@ -59,6 +61,16 @@ class SubscriberVerificationConfigTests(unittest.TestCase):
             "<@123> your Subscriber verification request was rejected.\nReason: Screenshot is unclear.",
         )
         self.assertIsNone(cog._public_content({"status": "pending", "user_id": 123}))
+
+    def test_deletes_only_old_final_requests(self):
+        current_ts = 10000000
+        old_ts = current_ts - REQUEST_RETENTION_SECONDS
+        recent_ts = old_ts + 1
+
+        self.assertTrue(should_delete_request({"status": "approved", "decided_at": old_ts}, current_ts=current_ts))
+        self.assertTrue(should_delete_request({"status": "rejected", "created_at": old_ts}, current_ts=current_ts))
+        self.assertFalse(should_delete_request({"status": "pending", "created_at": old_ts}, current_ts=current_ts))
+        self.assertFalse(should_delete_request({"status": "approved", "decided_at": recent_ts}, current_ts=current_ts))
 
 
 class SubscriberVerificationStoreTests(unittest.TestCase):

@@ -20,6 +20,8 @@ PUBLIC_LOG_CHANNEL_ID = 1521420636231172140
 PRIVATE_REVIEW_CHANNEL_ID = 1521434258475061339
 YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@kerevizYT"
 SUBMISSION_COOLDOWN_SECONDS = 24 * 60 * 60
+REQUEST_RETENTION_SECONDS = 30 * 24 * 60 * 60
+CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
 MAX_SCREENSHOT_SIZE_BYTES = 8 * 1024 * 1024
 ALLOWED_SCREENSHOT_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 
@@ -82,6 +84,18 @@ def format_cooldown(seconds: int) -> str:
     if hours:
         return f"{hours}h"
     return f"{minutes}m"
+
+
+def should_delete_request(record: dict[str, Any], *, current_ts: int | None = None) -> bool:
+    if record.get("status") not in {"approved", "rejected"}:
+        return False
+
+    current_ts = now_ts() if current_ts is None else current_ts
+    try:
+        reference_ts = int(record.get("decided_at") or record.get("created_at") or 0)
+    except (TypeError, ValueError):
+        return False
+    return reference_ts > 0 and current_ts - reference_ts >= REQUEST_RETENTION_SECONDS
 
 
 class SubscriberVerificationPanelView(discord.ui.View):
@@ -189,6 +203,7 @@ class SubscriberVerification(commands.Cog):
         self._panels: dict[int, dict[str, Any]] = {}
         self._store_available = True
         self._panel_task: asyncio.Task | None = None
+        self._cleanup_task: asyncio.Task | None = None
         self._panel_lock = asyncio.Lock()
         self._request_lock = asyncio.Lock()
 
@@ -203,6 +218,8 @@ class SubscriberVerification(commands.Cog):
     def cog_unload(self) -> None:
         if self._panel_task and not self._panel_task.done():
             self._panel_task.cancel()
+        if self._cleanup_task and not self._cleanup_task.done():
+            self._cleanup_task.cancel()
 
     @property
     def owner_id(self) -> int | None:
@@ -440,6 +457,43 @@ class SubscriberVerification(commands.Cog):
         if self._panel_task and not self._panel_task.done():
             return
         self._panel_task = asyncio.create_task(self._setup_panel())
+
+    def _start_cleanup_runner(self) -> None:
+        if self._cleanup_task and not self._cleanup_task.done():
+            return
+        self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+
+    async def _cleanup_loop(self) -> None:
+        await self.bot.wait_until_ready()
+        while not self.bot.is_closed():
+            await self.cleanup_old_requests()
+            await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
+
+    async def cleanup_old_requests(self) -> int:
+        if not self._store_available:
+            return 0
+
+        deleted = 0
+        async with self._request_lock:
+            request_ids = [
+                request_id
+                for request_id, record in self._requests.items()
+                if should_delete_request(record)
+            ]
+            for request_id in request_ids:
+                try:
+                    await self.store.delete_request(request_id)
+                except Exception as exc:
+                    self._store_available = False
+                    print(f"[SUB-VERIFY] Could not delete old request {request_id}: {exc}")
+                    break
+                else:
+                    self._requests.pop(request_id, None)
+                    deleted += 1
+
+        if deleted:
+            print(f"[SUB-VERIFY] Deleted {deleted} old Subscriber verification request(s).")
+        return deleted
 
     async def _setup_panel(self) -> None:
         await self.bot.wait_until_ready()
@@ -865,6 +919,7 @@ class SubscriberVerification(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         self._start_panel_setup()
+        self._start_cleanup_runner()
 
     @commands.group(
         name="subverify",
@@ -941,3 +996,4 @@ async def setup(bot: commands.Bot):
         command.category = "Admin"
     if bot.is_ready():
         cog._start_panel_setup()
+        cog._start_cleanup_runner()
