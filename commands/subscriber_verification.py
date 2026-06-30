@@ -1,5 +1,4 @@
 import asyncio
-import os
 import secrets
 from datetime import datetime, timezone
 from typing import Any
@@ -15,6 +14,7 @@ from services.subscriber_verification_store import (
 
 
 SUBSCRIBER_ROLE_ID = 1356275389592502513
+STAFF_ROLE_ID = 1521515151658975362
 PANEL_CHANNEL_ID = 1136310625056858153
 PUBLIC_LOG_CHANNEL_ID = 1521420636231172140
 PRIVATE_REVIEW_CHANNEL_ID = 1521434258475061339
@@ -224,16 +224,6 @@ class SubscriberVerification(commands.Cog):
         if self._cleanup_task and not self._cleanup_task.done():
             self._cleanup_task.cancel()
 
-    @property
-    def owner_id(self) -> int | None:
-        raw_owner = os.getenv("OWNER_ID")
-        if raw_owner:
-            try:
-                return int(raw_owner)
-            except ValueError:
-                return None
-        return self.bot.owner_id
-
     async def _fetch_text_channel(self, channel_id: int) -> discord.TextChannel | None:
         channel = self.bot.get_channel(channel_id)
         if channel is None:
@@ -265,6 +255,11 @@ class SubscriberVerification(commands.Cog):
         me = self._bot_member(guild)
         role = guild.get_role(SUBSCRIBER_ROLE_ID)
         return bool(me and role and me.guild_permissions.manage_roles and not role.managed and role < me.top_role)
+
+    def _is_staff_reviewer(self, user: discord.abc.User) -> bool:
+        if not isinstance(user, discord.Member):
+            return False
+        return any(role.id == STAFF_ROLE_ID for role in user.roles)
 
     def _setup_issues_for_channel(
         self,
@@ -312,8 +307,8 @@ class SubscriberVerification(commands.Cog):
         elif not self._can_manage_subscriber_role(guild):
             issues.append("I need **Manage Roles** and my bot role must be above the Subscriber role.")
 
-        if self.owner_id is None:
-            issues.append("OWNER_ID is not configured, so I cannot ping the bot owner for reviews.")
+        if guild.get_role(STAFF_ROLE_ID) is None:
+            issues.append(f"The Staff role (`{STAFF_ROLE_ID}`) was not found.")
 
         return issues
 
@@ -594,6 +589,9 @@ class SubscriberVerification(commands.Cog):
         embed.add_field(name="Member", value=f"<@{record['user_id']}>", inline=True)
         embed.add_field(name="Status", value=status.title(), inline=True)
         embed.add_field(name="Request ID", value=f"`{record['id']}`", inline=True)
+        if status in {"approved", "rejected"} and record.get("decided_by_id"):
+            reviewer_label = "Approved By" if status == "approved" else "Rejected By"
+            embed.add_field(name=reviewer_label, value=f"<@{record['decided_by_id']}>", inline=True)
         if status == "rejected" and record.get("decision_reason"):
             embed.add_field(name="Reason", value=str(record["decision_reason"])[:1024], inline=False)
         if record.get("decided_at"):
@@ -643,8 +641,8 @@ class SubscriberVerification(commands.Cog):
 
     def _review_content(self, record: dict[str, Any]) -> str | None:
         status = str(record.get("status") or "pending")
-        if status == "pending" and self.owner_id:
-            return f"<@{self.owner_id}> New Subscriber verification request."
+        if status == "pending":
+            return f"<@&{STAFF_ROLE_ID}> New Subscriber verification request."
         if status == "approved":
             return f"Request `{record['id']}` approved."
         if status == "rejected":
@@ -757,8 +755,8 @@ class SubscriberVerification(commands.Cog):
                     embed=self._review_embed(record),
                     view=SubscriberVerificationReviewView(self),
                     allowed_mentions=discord.AllowedMentions(
-                        users=[discord.Object(id=self.owner_id)] if self.owner_id else False,
-                        roles=False,
+                        users=False,
+                        roles=[discord.Object(id=STAFF_ROLE_ID)],
                         everyone=False,
                     ),
                 )
@@ -833,8 +831,8 @@ class SubscriberVerification(commands.Cog):
         if not interaction.guild or not interaction.message:
             return await interaction.response.send_message("This review action is not available here.", ephemeral=True)
 
-        if self.owner_id is None or interaction.user.id != self.owner_id:
-            return await interaction.response.send_message("Only the bot owner can review Subscriber requests.", ephemeral=True)
+        if not self._is_staff_reviewer(interaction.user):
+            return await interaction.response.send_message("Only staff can review Subscriber requests.", ephemeral=True)
 
         record = self._request_from_review_message(interaction.message.id)
         if not record:
@@ -870,8 +868,8 @@ class SubscriberVerification(commands.Cog):
         if not interaction.guild:
             return await interaction.response.send_message("This review action is not available here.", ephemeral=True)
 
-        if self.owner_id is None or interaction.user.id != self.owner_id:
-            return await interaction.response.send_message("Only the bot owner can review Subscriber requests.", ephemeral=True)
+        if not self._is_staff_reviewer(interaction.user):
+            return await interaction.response.send_message("Only staff can review Subscriber requests.", ephemeral=True)
 
         message_id = review_message_id or (interaction.message.id if interaction.message else None)
         if message_id is None:

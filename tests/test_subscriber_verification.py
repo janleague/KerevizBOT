@@ -3,6 +3,7 @@ import unittest
 from commands.subscriber_verification import (
     SubscriberRejectionModal,
     REQUEST_RETENTION_SECONDS,
+    STAFF_ROLE_ID,
     SubscriberVerification,
     SUBMISSION_COOLDOWN_SECONDS,
     YOUTUBE_CHANNEL_URL,
@@ -64,6 +65,28 @@ class SubscriberVerificationConfigTests(unittest.TestCase):
             "<@123> your Subscriber verification request was rejected.\nReason: Screenshot is unclear.",
         )
         self.assertIsNone(cog._public_content({"status": "pending", "user_id": 123}))
+
+    def test_review_content_pings_staff_role(self):
+        cog = SubscriberVerification(bot=None)
+        self.assertEqual(
+            cog._review_content({"status": "pending", "id": "abc"}),
+            f"<@&{STAFF_ROLE_ID}> New Subscriber verification request.",
+        )
+
+    def test_public_embed_shows_deciding_staff_member(self):
+        cog = SubscriberVerification(bot=None)
+        embed = cog._public_embed(
+            {
+                "id": "abc",
+                "status": "approved",
+                "user_id": 123,
+                "created_at": 1000,
+                "decided_by_id": 456,
+            }
+        )
+
+        fields = {field.name: field.value for field in embed.fields}
+        self.assertEqual(fields["Approved By"], "<@456>")
 
     def test_deletes_only_old_final_requests(self):
         current_ts = 10000000
