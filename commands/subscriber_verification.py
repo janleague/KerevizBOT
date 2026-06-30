@@ -113,7 +113,7 @@ class SubscriberVerificationReviewView(discord.ui.View):
 
     @discord.ui.button(label="Reject", style=discord.ButtonStyle.danger, custom_id=REJECT_CUSTOM_ID)
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):  # noqa: ARG002
-        await self.cog.review_request(interaction, approved=False)
+        await self.cog.open_rejection_modal(interaction)
 
 
 class SubscriberVerificationModal(discord.ui.Modal, title="Subscriber Verification"):
@@ -153,6 +153,29 @@ class SubscriberVerificationModal(discord.ui.Modal, title="Subscriber Verificati
             youtube_username=str(self.youtube_username.value),
             screenshot=screenshot,
             screenshot_url=str(self.screenshot_url.value),
+        )
+
+
+class SubscriberRejectionModal(discord.ui.Modal, title="Reject Subscriber Request"):
+    reason = discord.ui.TextInput(
+        label="Rejection reason",
+        placeholder="Explain what is missing or why the proof was rejected.",
+        style=discord.TextStyle.paragraph,
+        min_length=3,
+        max_length=500,
+    )
+
+    def __init__(self, cog: "SubscriberVerification", review_message_id: int):
+        super().__init__()
+        self.cog = cog
+        self.review_message_id = review_message_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.cog.review_request(
+            interaction,
+            approved=False,
+            review_message_id=self.review_message_id,
+            reason=str(self.reason.value),
         )
 
 
@@ -514,6 +537,8 @@ class SubscriberVerification(commands.Cog):
         embed.add_field(name="Member", value=f"<@{record['user_id']}>", inline=True)
         embed.add_field(name="Status", value=status.title(), inline=True)
         embed.add_field(name="Request ID", value=f"`{record['id']}`", inline=True)
+        if status == "rejected" and record.get("decision_reason"):
+            embed.add_field(name="Reason", value=str(record["decision_reason"])[:1024], inline=False)
         if record.get("decided_at"):
             embed.add_field(name="Reviewed", value=f"<t:{int(record['decided_at'])}:R>", inline=True)
         embed.set_footer(text="Subscriber verification status")
@@ -550,6 +575,8 @@ class SubscriberVerification(commands.Cog):
             embed.add_field(name="Reviewed By", value=f"<@{record['decided_by_id']}>", inline=True)
         if record.get("decided_at"):
             embed.add_field(name="Reviewed At", value=f"<t:{int(record['decided_at'])}:F>", inline=True)
+        if status == "rejected" and record.get("decision_reason"):
+            embed.add_field(name="Rejection Reason", value=str(record["decision_reason"])[:1024], inline=False)
 
         screenshot_url = record.get("screenshot_url")
         if screenshot_url:
@@ -571,7 +598,10 @@ class SubscriberVerification(commands.Cog):
         if record.get("status") == "approved":
             return f"<@{record['user_id']}> your Subscriber verification request was approved."
         if record.get("status") == "rejected":
-            return f"<@{record['user_id']}> your Subscriber verification request was rejected."
+            content = f"<@{record['user_id']}> your Subscriber verification request was rejected."
+            if record.get("decision_reason"):
+                content += f"\nReason: {str(record['decision_reason'])[:1500]}"
+            return content
         return None
 
     async def submit_request(
@@ -742,6 +772,21 @@ class SubscriberVerification(commands.Cog):
         except (discord.Forbidden, discord.HTTPException):
             return
 
+    async def open_rejection_modal(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild or not interaction.message:
+            return await interaction.response.send_message("This review action is not available here.", ephemeral=True)
+
+        if self.owner_id is None or interaction.user.id != self.owner_id:
+            return await interaction.response.send_message("Only the bot owner can review Subscriber requests.", ephemeral=True)
+
+        record = self._request_from_review_message(interaction.message.id)
+        if not record:
+            return await interaction.response.send_message("I could not find this Subscriber request.", ephemeral=True)
+        if record.get("status") != "pending":
+            return await interaction.response.send_message("This Subscriber request was already reviewed.", ephemeral=True)
+
+        await interaction.response.send_modal(SubscriberRejectionModal(self, interaction.message.id))
+
     async def _update_review_message(self, record: dict[str, Any]) -> None:
         channel = await self._fetch_text_channel(int(record["review_channel_id"]))
         if not channel or not record.get("review_message_id"):
@@ -757,14 +802,25 @@ class SubscriberVerification(commands.Cog):
         except (discord.Forbidden, discord.NotFound, discord.HTTPException):
             return
 
-    async def review_request(self, interaction: discord.Interaction, *, approved: bool) -> None:
-        if not interaction.guild or not interaction.message:
+    async def review_request(
+        self,
+        interaction: discord.Interaction,
+        *,
+        approved: bool,
+        review_message_id: int | None = None,
+        reason: str | None = None,
+    ) -> None:
+        if not interaction.guild:
             return await interaction.response.send_message("This review action is not available here.", ephemeral=True)
 
         if self.owner_id is None or interaction.user.id != self.owner_id:
             return await interaction.response.send_message("Only the bot owner can review Subscriber requests.", ephemeral=True)
 
-        record = self._request_from_review_message(interaction.message.id)
+        message_id = review_message_id or (interaction.message.id if interaction.message else None)
+        if message_id is None:
+            return await interaction.response.send_message("This review action is not available here.", ephemeral=True)
+
+        record = self._request_from_review_message(message_id)
         if not record:
             return await interaction.response.send_message("I could not find this Subscriber request.", ephemeral=True)
         if record.get("status") != "pending":
@@ -795,6 +851,7 @@ class SubscriberVerification(commands.Cog):
             stored["status"] = "approved" if approved else "rejected"
             stored["decided_at"] = now_ts()
             stored["decided_by_id"] = interaction.user.id
+            stored["decision_reason"] = "" if approved else (reason or "").strip()
             await self._save_request(stored)
             updated = dict(stored)
 

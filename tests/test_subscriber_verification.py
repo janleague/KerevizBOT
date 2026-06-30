@@ -55,8 +55,8 @@ class SubscriberVerificationConfigTests(unittest.TestCase):
             "<@123> your Subscriber verification request was approved.",
         )
         self.assertEqual(
-            cog._public_content({"status": "rejected", "user_id": 123}),
-            "<@123> your Subscriber verification request was rejected.",
+            cog._public_content({"status": "rejected", "user_id": 123, "decision_reason": "Screenshot is unclear."}),
+            "<@123> your Subscriber verification request was rejected.\nReason: Screenshot is unclear.",
         )
         self.assertIsNone(cog._public_content({"status": "pending", "user_id": 123}))
 
