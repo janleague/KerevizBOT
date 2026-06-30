@@ -5,6 +5,7 @@ from commands.subscriber_verification import (
     format_cooldown,
     is_supported_image_file,
     seconds_until_next_submission,
+    valid_http_url,
 )
 from services.subscriber_verification_store import normalize_panel, normalize_request
 
@@ -16,6 +17,12 @@ class SubscriberVerificationConfigTests(unittest.TestCase):
         self.assertTrue(is_supported_image_file("proof.webp", "application/octet-stream"))
         self.assertFalse(is_supported_image_file("proof.pdf", "application/pdf"))
         self.assertFalse(is_supported_image_file("proof.txt", None))
+
+    def test_accepts_pasted_http_screenshot_urls(self):
+        self.assertTrue(valid_http_url("https://cdn.discordapp.com/example.png"))
+        self.assertTrue(valid_http_url("http://example.com/proof.jpg"))
+        self.assertFalse(valid_http_url("ftp://example.com/proof.jpg"))
+        self.assertFalse(valid_http_url("not a url"))
 
     def test_member_can_submit_once_per_24_hours(self):
         records = {

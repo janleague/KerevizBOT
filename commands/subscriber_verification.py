@@ -45,6 +45,11 @@ def is_supported_image_file(filename: str | None, content_type: str | None) -> b
     return normalized_name.endswith(ALLOWED_SCREENSHOT_EXTENSIONS)
 
 
+def valid_http_url(value: str) -> bool:
+    normalized = value.strip().lower()
+    return normalized.startswith("https://") or normalized.startswith("http://")
+
+
 def seconds_until_next_submission(
     requests: dict[str, dict[str, Any]],
     guild_id: int,
@@ -119,13 +124,20 @@ class SubscriberVerificationModal(discord.ui.Modal, title="Subscriber Verificati
     )
     screenshot_file = discord.ui.Label(
         text="Subscription screenshot",
-        description="Upload an image showing that you are subscribed.",
+        description="Upload an image, or paste an image link below.",
         component=discord.ui.FileUpload(
             custom_id="kereviz_sub_verify_screenshot",
-            required=True,
-            min_values=1,
+            required=False,
+            min_values=0,
             max_values=1,
         ),
+    )
+    screenshot_url = discord.ui.TextInput(
+        label="Screenshot image URL",
+        placeholder="Optional: paste a Discord CDN, Imgur, or direct image link.",
+        required=False,
+        min_length=0,
+        max_length=500,
     )
 
     def __init__(self, cog: "SubscriberVerification"):
@@ -139,6 +151,7 @@ class SubscriberVerificationModal(discord.ui.Modal, title="Subscriber Verificati
             interaction,
             youtube_username=str(self.youtube_username.value),
             screenshot=screenshot,
+            screenshot_url=str(self.screenshot_url.value),
         )
 
 
@@ -265,7 +278,7 @@ class SubscriberVerification(commands.Cog):
             title="Subscriber Role Verification",
             description=(
                 "Use the button below to request the **Subscriber** role.\n\n"
-                "You will be asked for your YouTube username and a screenshot file showing that you are subscribed."
+                "You will be asked for your YouTube username and proof showing that you are subscribed."
             ),
             color=discord.Color(PANEL_COLOR),
             timestamp=discord.utils.utcnow(),
@@ -274,7 +287,7 @@ class SubscriberVerification(commands.Cog):
             name="What You Need",
             value=(
                 "- Your YouTube username\n"
-                "- A screenshot image showing your subscription\n"
+                "- A screenshot image upload or direct image link\n"
                 "- One request every 24 hours"
             ),
             inline=False,
@@ -559,24 +572,35 @@ class SubscriberVerification(commands.Cog):
         *,
         youtube_username: str,
         screenshot: discord.Attachment | None,
+        screenshot_url: str,
     ) -> None:
         if not interaction.guild or not isinstance(interaction.user, discord.Member):
             return await interaction.response.send_message("This form can only be used in the server.", ephemeral=True)
 
         youtube_username = youtube_username.strip()
-        if screenshot is None:
+        screenshot_url = screenshot_url.strip()
+        proof_url = screenshot_url
+        if screenshot is not None:
+            if not is_supported_image_file(screenshot.filename, screenshot.content_type):
+                return await interaction.response.send_message(
+                    "Please upload a valid image file: PNG, JPG, JPEG, WEBP, or GIF.",
+                    ephemeral=True,
+                )
+            if screenshot.size and screenshot.size > MAX_SCREENSHOT_SIZE_BYTES:
+                return await interaction.response.send_message(
+                    "Please upload a screenshot smaller than 8 MB.",
+                    ephemeral=True,
+                )
+            proof_url = screenshot.url
+
+        if not proof_url:
             return await interaction.response.send_message(
-                "Please upload a screenshot image with your request.",
+                "Please upload a screenshot image or paste a direct image URL.",
                 ephemeral=True,
             )
-        if not is_supported_image_file(screenshot.filename, screenshot.content_type):
+        if screenshot is None and not valid_http_url(proof_url):
             return await interaction.response.send_message(
-                "Please upload a valid image file: PNG, JPG, JPEG, WEBP, or GIF.",
-                ephemeral=True,
-            )
-        if screenshot.size and screenshot.size > MAX_SCREENSHOT_SIZE_BYTES:
-            return await interaction.response.send_message(
-                "Please upload a screenshot smaller than 8 MB.",
+                "Please paste a valid screenshot URL starting with http:// or https://.",
                 ephemeral=True,
             )
 
@@ -613,7 +637,7 @@ class SubscriberVerification(commands.Cog):
                 "guild_id": interaction.guild.id,
                 "user_id": interaction.user.id,
                 "youtube_username": youtube_username,
-                "screenshot_url": screenshot.url,
+                "screenshot_url": proof_url,
                 "status": "pending",
                 "created_at": now_ts(),
                 "decided_at": None,
