@@ -3,6 +3,7 @@ import unittest
 from commands.subscriber_verification import (
     SubscriberVerification,
     SUBMISSION_COOLDOWN_SECONDS,
+    YOUTUBE_CHANNEL_URL,
     format_cooldown,
     is_supported_image_file,
     seconds_until_next_submission,
@@ -12,6 +13,9 @@ from services.subscriber_verification_store import normalize_panel, normalize_re
 
 
 class SubscriberVerificationConfigTests(unittest.TestCase):
+    def test_uses_kereviz_youtube_channel_url(self):
+        self.assertEqual(YOUTUBE_CHANNEL_URL, "https://www.youtube.com/@kerevizYT")
+
     def test_validates_screenshot_image_files(self):
         self.assertTrue(is_supported_image_file("proof.txt", "image/png"))
         self.assertTrue(is_supported_image_file("proof.jpg", None))

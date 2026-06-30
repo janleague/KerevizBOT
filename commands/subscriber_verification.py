@@ -18,6 +18,7 @@ SUBSCRIBER_ROLE_ID = 1356275389592502513
 PANEL_CHANNEL_ID = 1136310625056858153
 PUBLIC_LOG_CHANNEL_ID = 1521420636231172140
 PRIVATE_REVIEW_CHANNEL_ID = 1521434258475061339
+YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@kerevizYT"
 SUBMISSION_COOLDOWN_SECONDS = 24 * 60 * 60
 MAX_SCREENSHOT_SIZE_BYTES = 8 * 1024 * 1024
 ALLOWED_SCREENSHOT_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
@@ -290,6 +291,11 @@ class SubscriberVerification(commands.Cog):
                 "- A screenshot image upload or direct image link\n"
                 "- One request every 24 hours"
             ),
+            inline=False,
+        )
+        embed.add_field(
+            name="YouTube Channel",
+            value=f"[Open Kereviz YouTube]({YOUTUBE_CHANNEL_URL})",
             inline=False,
         )
         embed.add_field(
