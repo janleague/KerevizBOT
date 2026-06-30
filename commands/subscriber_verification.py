@@ -711,13 +711,35 @@ class SubscriberVerification(commands.Cog):
         try:
             message = await channel.fetch_message(int(record["public_message_id"]))
             await message.edit(
-                content=self._public_content(record),
+                content=None,
                 embed=self._public_embed(record),
-                allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False)
-                if record.get("status") in {"approved", "rejected"}
-                else discord.AllowedMentions.none(),
+                allowed_mentions=discord.AllowedMentions.none(),
             )
         except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+            return
+
+    async def _send_public_decision_ping(self, record: dict[str, Any]) -> None:
+        content = self._public_content(record)
+        if not content:
+            return
+
+        channel = await self._fetch_text_channel(int(record["public_log_channel_id"]))
+        if not channel:
+            return
+
+        public_message_id = record.get("public_message_id")
+        if public_message_id:
+            content += (
+                f"\nStatus: https://discord.com/channels/{record['guild_id']}/"
+                f"{record['public_log_channel_id']}/{public_message_id}"
+            )
+
+        try:
+            await channel.send(
+                content,
+                allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
+            )
+        except (discord.Forbidden, discord.HTTPException):
             return
 
     async def _update_review_message(self, record: dict[str, Any]) -> None:
@@ -777,6 +799,7 @@ class SubscriberVerification(commands.Cog):
             updated = dict(stored)
 
         await self._update_public_message(updated)
+        await self._send_public_decision_ping(updated)
         await self._update_review_message(updated)
 
         action = "approved" if approved else "rejected"
