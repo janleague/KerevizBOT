@@ -1,4 +1,5 @@
 .git/
+.gitignore
 __pycache__/
 *.pyc
 *.pyo
@@ -8,6 +9,10 @@ __pycache__/
 *.zip
 deleted_image_cache/
 discloud/
+tests/
+README.md
+LICENSE
+discloud.ps1
 node_modules/
 .venv/
 venv/
