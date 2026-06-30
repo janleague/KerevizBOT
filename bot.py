@@ -877,7 +877,7 @@ async def on_member_join(member: discord.Member):
             title=f"📥 Welcome {member.name}!",
             description=(
                 f"Hey {member.mention}, welcome to **{member.guild.name}**!\n\n"
-                "📸 Please use the Subscriber verification panel to submit your YouTube username and screenshot link.\n"
+                "📸 Please use the Subscriber verification panel to submit your YouTube username and screenshot file.\n"
                 "💬 Use `!help` any time if you need assistance!"
             ),
             color=discord.Color.green(),
