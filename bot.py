@@ -877,7 +877,7 @@ async def on_member_join(member: discord.Member):
             title=f"📥 Welcome {member.name}!",
             description=(
                 f"Hey {member.mention}, welcome to **{member.guild.name}**!\n\n"
-                "📸 Please send a screenshot showing you're subscribed to **Kereviz** on YouTube.\n"
+                "📸 Please use the Subscriber verification panel to submit your YouTube username and screenshot link.\n"
                 "💬 Use `!help` any time if you need assistance!"
             ),
             color=discord.Color.green(),
@@ -892,7 +892,7 @@ async def on_member_join(member: discord.Member):
                 "Hey there!\n\n"
                 "📺 **Quick favor:** Make sure you're **subscribed** to "
                 f"[Kereviz YouTube]({YOUTUBE_URL}) and then "
-                "send a screenshot in the server so we can verify you and give you the **Subscriber** role.\n\n"
+                "use the Subscriber verification panel so we can review your proof and give you the **Subscriber** role.\n\n"
                 "Need help? Just type `!help` anywhere in the server or reply here!"
             ),
             color=discord.Color.green(),

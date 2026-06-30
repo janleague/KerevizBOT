@@ -11,6 +11,7 @@ A polished, modular Discord bot built for community management and creator-focus
 - **Invite tracking**: tracks invite usage, member joins/leaves, reward roles, leaderboards, and logging.
 - **Giveaways**: persistent button-based giveaways with rerolls, role requirements, bonus entries, and recovery for missed announcements.
 - **Reaction roles**: persistent notification-role panel for YouTube and giveaway pings.
+- **Subscriber verification**: modal-based Subscriber role request flow with private proof review, public status logs, and one request per member every 24 hours.
 - **AI commands**: free text and image utilities powered by Pollinations.
 - **Hypixel stats**: profile, BedWars, SkyWars, and Duels player statistics with clean Discord embeds.
 - **Minecraft server discovery**: random live server lookup from a Firestore-backed server list.
@@ -129,6 +130,11 @@ The notification reaction-role panel stores:
 
 - `reaction_role_panels/{guild_id}`
 
+The Subscriber verification system stores:
+
+- `subscriber_verifications/{request_id}`
+- `subscriber_verification_panels/{guild_id}`
+
 The Minecraft server command stores:
 
 - `minecraft_servers/{server_host}`
@@ -169,6 +175,8 @@ Deleted image files are cached locally in `deleted_image_cache/` until the delet
 - `!reactionroles` - Show the notification reaction-role panel status.
 - `!reactionroles post` - Create or refresh the YouTube/Giveaway ping reaction panel.
 - `!reactionroles sync` - Grant missing notification roles from the current panel reactions.
+- `!subverify` - Show the Subscriber verification panel status.
+- `!subverify post` - Create or refresh the Subscriber verification panel.
 - `/ban`
 - `/timeout`
 - `/clear`
