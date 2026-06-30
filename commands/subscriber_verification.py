@@ -562,6 +562,8 @@ class SubscriberVerification(commands.Cog):
         return None
 
     def _public_content(self, record: dict[str, Any]) -> str | None:
+        if record.get("status") == "approved":
+            return f"<@{record['user_id']}> your Subscriber verification request was approved."
         if record.get("status") == "rejected":
             return f"<@{record['user_id']}> your Subscriber verification request was rejected."
         return None
@@ -706,7 +708,7 @@ class SubscriberVerification(commands.Cog):
                 content=self._public_content(record),
                 embed=self._public_embed(record),
                 allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False)
-                if record.get("status") == "rejected"
+                if record.get("status") in {"approved", "rejected"}
                 else discord.AllowedMentions.none(),
             )
         except (discord.Forbidden, discord.NotFound, discord.HTTPException):

@@ -1,6 +1,7 @@
 import unittest
 
 from commands.subscriber_verification import (
+    SubscriberVerification,
     SUBMISSION_COOLDOWN_SECONDS,
     format_cooldown,
     is_supported_image_file,
@@ -41,6 +42,19 @@ class SubscriberVerificationConfigTests(unittest.TestCase):
         self.assertEqual(format_cooldown(60), "1m")
         self.assertEqual(format_cooldown(3600), "1h")
         self.assertEqual(format_cooldown(3661), "1h 2m")
+
+    def test_public_content_pings_on_final_decision(self):
+        cog = SubscriberVerification(bot=None)
+
+        self.assertEqual(
+            cog._public_content({"status": "approved", "user_id": 123}),
+            "<@123> your Subscriber verification request was approved.",
+        )
+        self.assertEqual(
+            cog._public_content({"status": "rejected", "user_id": 123}),
+            "<@123> your Subscriber verification request was rejected.",
+        )
+        self.assertIsNone(cog._public_content({"status": "pending", "user_id": 123}))
 
 
 class SubscriberVerificationStoreTests(unittest.TestCase):
