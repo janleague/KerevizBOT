@@ -1,6 +1,7 @@
 import unittest
 
 from commands.subscriber_verification import (
+    SubscriberRejectionModal,
     REQUEST_RETENTION_SECONDS,
     SubscriberVerification,
     SUBMISSION_COOLDOWN_SECONDS,
@@ -35,6 +36,7 @@ class SubscriberVerificationConfigTests(unittest.TestCase):
         records = {
             "old": {"guild_id": 1, "user_id": 10, "created_at": 1000},
             "recent": {"guild_id": 1, "user_id": 10, "created_at": 2000},
+            "rejected": {"guild_id": 1, "user_id": 12, "created_at": 2500, "status": "rejected"},
             "other_user": {"guild_id": 1, "user_id": 11, "created_at": 2500},
             "other_guild": {"guild_id": 2, "user_id": 10, "created_at": 2500},
         }
@@ -42,6 +44,7 @@ class SubscriberVerificationConfigTests(unittest.TestCase):
         remaining = seconds_until_next_submission(records, 1, 10, current_ts=2600)
         self.assertEqual(remaining, SUBMISSION_COOLDOWN_SECONDS - 600)
         self.assertEqual(seconds_until_next_submission(records, 1, 11, current_ts=2600), SUBMISSION_COOLDOWN_SECONDS - 100)
+        self.assertEqual(seconds_until_next_submission(records, 1, 12, current_ts=2600), 0)
         self.assertEqual(seconds_until_next_submission(records, 1, 10, current_ts=2000 + SUBMISSION_COOLDOWN_SECONDS), 0)
 
     def test_formats_cooldown_cleanly(self):
@@ -71,6 +74,11 @@ class SubscriberVerificationConfigTests(unittest.TestCase):
         self.assertTrue(should_delete_request({"status": "rejected", "created_at": old_ts}, current_ts=current_ts))
         self.assertFalse(should_delete_request({"status": "pending", "created_at": old_ts}, current_ts=current_ts))
         self.assertFalse(should_delete_request({"status": "approved", "decided_at": recent_ts}, current_ts=current_ts))
+
+    def test_rejection_reason_is_optional(self):
+        cog = SubscriberVerification(bot=None)
+        modal = SubscriberRejectionModal(cog, review_message_id=123)
+        self.assertFalse(modal.reason.required)
 
 
 class SubscriberVerificationStoreTests(unittest.TestCase):

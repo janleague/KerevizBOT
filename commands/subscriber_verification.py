@@ -65,6 +65,8 @@ def seconds_until_next_submission(
     for record in requests.values():
         if record.get("guild_id") != guild_id or record.get("user_id") != user_id:
             continue
+        if record.get("status") == "rejected":
+            continue
         try:
             created_at = int(record.get("created_at") or 0)
         except (TypeError, ValueError):
@@ -173,9 +175,10 @@ class SubscriberVerificationModal(discord.ui.Modal, title="Subscriber Verificati
 class SubscriberRejectionModal(discord.ui.Modal, title="Reject Subscriber Request"):
     reason = discord.ui.TextInput(
         label="Rejection reason",
-        placeholder="Explain what is missing or why the proof was rejected.",
+        placeholder="Optional: explain what is missing or why the proof was rejected.",
         style=discord.TextStyle.paragraph,
-        min_length=3,
+        required=False,
+        min_length=0,
         max_length=500,
     )
 
