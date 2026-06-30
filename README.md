@@ -10,6 +10,7 @@ A polished, modular Discord bot built for community management and creator-focus
 - **YouTube announcements**: polls a YouTube RSS feed with retry protection and posts new upload alerts with Firestore-backed duplicate protection.
 - **Invite tracking**: tracks invite usage, member joins/leaves, reward roles, leaderboards, and logging.
 - **Giveaways**: persistent button-based giveaways with rerolls, role requirements, bonus entries, and recovery for missed announcements.
+- **Reaction roles**: persistent notification-role panel for YouTube and giveaway pings.
 - **AI commands**: free text and image utilities powered by Pollinations.
 - **Hypixel stats**: profile, BedWars, SkyWars, and Duels player statistics with clean Discord embeds.
 - **Minecraft server discovery**: random live server lookup from a Firestore-backed server list.
@@ -124,6 +125,10 @@ The giveaway system stores:
 
 - `giveaways/{giveaway_id}`
 
+The notification reaction-role panel stores:
+
+- `reaction_role_panels/{guild_id}`
+
 The Minecraft server command stores:
 
 - `minecraft_servers/{server_host}`
@@ -161,6 +166,9 @@ Deleted image files are cached locally in `deleted_image_cache/` until the delet
 - `!a`
 - `!s`
 - `!clear <message count>`
+- `!reactionroles` - Show the notification reaction-role panel status.
+- `!reactionroles post` - Create or refresh the YouTube/Giveaway ping reaction panel.
+- `!reactionroles sync` - Grant missing notification roles from the current panel reactions.
 - `/ban`
 - `/timeout`
 - `/clear`
