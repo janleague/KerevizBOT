@@ -1,5 +1,7 @@
 import asyncio
+import io
 import os
+import re
 import secrets
 from datetime import datetime, timezone
 from typing import Any
@@ -61,6 +63,20 @@ def select_supported_image_attachment(attachments: list[Any] | tuple[Any, ...]) 
         ):
             return attachment
     return None
+
+
+def safe_proof_attachment_filename(filename: str | None) -> str:
+    base = os.path.basename(str(filename or "subscriber-proof.png")).strip()
+    base = re.sub(r"[^A-Za-z0-9_.-]+", "-", base).strip(".-")
+    if not base:
+        base = "subscriber-proof.png"
+
+    if not base.lower().endswith(ALLOWED_SCREENSHOT_EXTENSIONS):
+        base = f"{base}.png"
+
+    name, extension = os.path.splitext(base)
+    name = name[:64].strip(".-") or "subscriber-proof"
+    return f"{name}{extension.lower()}"
 
 
 def is_proof_upload_category_name(name: str | None) -> bool:
@@ -872,7 +888,14 @@ class SubscriberVerification(commands.Cog):
         embed.add_field(name="Member", value=f"<@{record['user_id']}> (`{record['user_id']}`)", inline=False)
         if record.get("youtube_username"):
             embed.add_field(name="YouTube Username", value=record.get("youtube_username"), inline=False)
-        embed.add_field(name="Proof Image", value=record.get("screenshot_url") or "Not provided", inline=False)
+        proof_url = record.get("proof_attachment_url") or record.get("screenshot_url")
+        if proof_url:
+            proof_value = f"[Open image]({proof_url})"
+        elif record.get("proof_attachment_filename"):
+            proof_value = "Attached below."
+        else:
+            proof_value = "Not provided"
+        embed.add_field(name="Proof Image", value=proof_value, inline=False)
         embed.add_field(name="Status", value=status.title(), inline=True)
         embed.add_field(name="Request ID", value=f"`{record['id']}`", inline=True)
 
@@ -891,9 +914,11 @@ class SubscriberVerification(commands.Cog):
         if status == "rejected" and record.get("decision_reason"):
             embed.add_field(name="Rejection Reason", value=str(record["decision_reason"])[:1024], inline=False)
 
-        screenshot_url = record.get("screenshot_url")
-        if screenshot_url:
-            embed.set_image(url=screenshot_url)
+        proof_filename = record.get("proof_attachment_filename")
+        if proof_filename:
+            embed.set_image(url=f"attachment://{proof_filename}")
+        elif proof_url:
+            embed.set_image(url=proof_url)
         embed.set_footer(text="Accept grants Subscriber. Reject pings the member in public logs.")
         return embed
 
@@ -916,6 +941,14 @@ class SubscriberVerification(commands.Cog):
                 content += f"\nReason: {str(record['decision_reason'])[:1500]}"
             return content
         return None
+
+    async def _proof_attachment_file(self, attachment: discord.Attachment) -> discord.File:
+        filename = safe_proof_attachment_filename(getattr(attachment, "filename", None))
+        try:
+            data = await attachment.read(use_cached=True)
+        except TypeError:
+            data = await attachment.read()
+        return discord.File(io.BytesIO(data), filename=filename)
 
     async def _create_proof_upload_channel(
         self,
@@ -1098,7 +1131,7 @@ class SubscriberVerification(commands.Cog):
         member: discord.Member,
         *,
         youtube_username: str = "",
-        proof_url: str,
+        proof_file: discord.File,
     ) -> tuple[bool, str]:
         role = guild.get_role(SUBSCRIBER_ROLE_ID)
         if role and role in member.roles:
@@ -1124,7 +1157,9 @@ class SubscriberVerification(commands.Cog):
                 "guild_id": guild.id,
                 "user_id": member.id,
                 "youtube_username": youtube_username.strip(),
-                "screenshot_url": proof_url,
+                "screenshot_url": "",
+                "proof_attachment_filename": proof_file.filename,
+                "proof_attachment_url": "",
                 "status": "pending",
                 "created_at": now_ts(),
                 "decided_at": None,
@@ -1146,6 +1181,7 @@ class SubscriberVerification(commands.Cog):
 
                 review_message = await private_review.send(
                     content=self._review_content(record),
+                    file=proof_file,
                     embed=self._review_embed(record),
                     view=SubscriberVerificationReviewView(self),
                     allowed_mentions=discord.AllowedMentions(
@@ -1155,6 +1191,20 @@ class SubscriberVerification(commands.Cog):
                     ),
                 )
                 record["review_message_id"] = review_message.id
+                if review_message.attachments:
+                    proof_url = review_message.attachments[0].url
+                    record["proof_attachment_url"] = proof_url
+                    record["screenshot_url"] = proof_url
+                    try:
+                        await review_message.edit(
+                            content=self._review_content(record),
+                            embed=self._review_embed(record),
+                            view=SubscriberVerificationReviewView(self),
+                            attachments=review_message.attachments,
+                            allowed_mentions=discord.AllowedMentions.none(),
+                        )
+                    except discord.HTTPException as exc:
+                        print(f"[SUB-VERIFY] Could not refresh proof image embed: {exc}")
             except (discord.Forbidden, discord.HTTPException) as exc:
                 if public_message is not None:
                     try:
@@ -1205,6 +1255,14 @@ class SubscriberVerification(commands.Cog):
         if attachment.size and attachment.size > MAX_SCREENSHOT_SIZE_BYTES:
             return await message.channel.send("Please send a screenshot smaller than 8 MB.")
 
+        try:
+            proof_file = await self._proof_attachment_file(attachment)
+        except (discord.HTTPException, OSError) as exc:
+            print(f"[SUB-VERIFY] Could not download proof attachment: {exc}")
+            return await message.channel.send(
+                "I could not download that screenshot. Please upload it again."
+            )
+
         guild = self.bot.get_guild(int(session["guild_id"]))
         if guild is None:
             self._pending_proof_channels.pop(message.channel.id, None)
@@ -1223,7 +1281,7 @@ class SubscriberVerification(commands.Cog):
         success, response = await self._create_request_for_member(
             guild,
             member,
-            proof_url=attachment.url,
+            proof_file=proof_file,
         )
         if not success:
             return await message.channel.send(
@@ -1313,6 +1371,7 @@ class SubscriberVerification(commands.Cog):
                 content=self._review_content(record),
                 embed=self._review_embed(record),
                 view=SubscriberVerificationReviewView(self, disabled=record.get("status") != "pending"),
+                attachments=message.attachments,
                 allowed_mentions=discord.AllowedMentions.none(),
             )
         except (discord.Forbidden, discord.NotFound, discord.HTTPException):

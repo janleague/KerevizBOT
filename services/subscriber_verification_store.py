@@ -33,6 +33,8 @@ def normalize_request(record: dict[str, Any] | None) -> dict[str, Any]:
     normalized["status"] = str(normalized.get("status") or "pending")
     normalized["youtube_username"] = str(normalized.get("youtube_username") or "").strip()
     normalized["screenshot_url"] = str(normalized.get("screenshot_url") or "").strip()
+    normalized["proof_attachment_filename"] = str(normalized.get("proof_attachment_filename") or "").strip()
+    normalized["proof_attachment_url"] = str(normalized.get("proof_attachment_url") or "").strip()
     normalized["decision_reason"] = str(normalized.get("decision_reason") or "").strip()
     return normalized
 

@@ -13,6 +13,7 @@ from commands.subscriber_verification import (
     is_supported_image_file,
     pending_proof_channel_expired,
     proof_upload_channel_name,
+    safe_proof_attachment_filename,
     seconds_until_next_submission,
     select_supported_image_attachment,
     should_delete_request,
@@ -54,6 +55,10 @@ class SubscriberVerificationConfigTests(unittest.TestCase):
         image = Attachment("proof.png", "image/png")
         self.assertIs(select_supported_image_attachment([Attachment("proof.pdf", "application/pdf"), image]), image)
         self.assertIsNone(select_supported_image_attachment([Attachment("proof.txt", "text/plain")]))
+
+    def test_sanitizes_proof_attachment_filename(self):
+        self.assertEqual(safe_proof_attachment_filename("../My Proof.PNG"), "My-Proof.png")
+        self.assertEqual(safe_proof_attachment_filename("proof"), "proof.png")
 
     def test_pending_proof_channel_expiry(self):
         session = {"expires_at": 1000 + PROOF_UPLOAD_TIMEOUT_SECONDS}
@@ -115,6 +120,27 @@ class SubscriberVerificationConfigTests(unittest.TestCase):
         fields = {field.name: field.value for field in embed.fields}
         self.assertEqual(fields["Approved By"], "<@456>")
 
+    def test_review_embed_uses_uploaded_attachment_image(self):
+        cog = SubscriberVerification(bot=None)
+        embed = cog._review_embed(
+            {
+                "id": "abc",
+                "guild_id": 1,
+                "user_id": 123,
+                "status": "pending",
+                "created_at": 1000,
+                "public_log_channel_id": 2,
+                "public_message_id": 3,
+                "proof_attachment_filename": "proof.png",
+                "proof_attachment_url": "https://cdn.discordapp.com/attachments/proof.png",
+                "screenshot_url": "https://old.example/proof.png",
+            }
+        )
+
+        fields = {field.name: field.value for field in embed.fields}
+        self.assertEqual(fields["Proof Image"], "[Open image](https://cdn.discordapp.com/attachments/proof.png)")
+        self.assertEqual(embed.image.url, "attachment://proof.png")
+
     def test_deletes_only_old_final_requests(self):
         current_ts = 10000000
         old_ts = current_ts - REQUEST_RETENTION_SECONDS
@@ -143,6 +169,8 @@ class SubscriberVerificationStoreTests(unittest.TestCase):
                 "review_message_id": "5",
                 "youtube_username": "  @kereviz  ",
                 "screenshot_url": "  https://example.com/proof.png  ",
+                "proof_attachment_filename": "  proof.png  ",
+                "proof_attachment_url": "  https://cdn.example/proof.png  ",
             }
         )
 
@@ -154,6 +182,8 @@ class SubscriberVerificationStoreTests(unittest.TestCase):
         self.assertEqual(record["review_message_id"], 5)
         self.assertEqual(record["youtube_username"], "@kereviz")
         self.assertEqual(record["screenshot_url"], "https://example.com/proof.png")
+        self.assertEqual(record["proof_attachment_filename"], "proof.png")
+        self.assertEqual(record["proof_attachment_url"], "https://cdn.example/proof.png")
         self.assertEqual(record["status"], "pending")
 
     def test_normalizes_panel_ids(self):
