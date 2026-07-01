@@ -46,7 +46,13 @@ class DeletedImageStore:
 
     def _delete_old_messages_sync(self, cutoff, limit: int) -> list[dict[str, Any]]:
         db = get_firestore_client()
-        query = self._collection_ref().where("updated_at", "<=", cutoff).limit(max(1, int(limit)))
+        try:
+            from google.cloud.firestore_v1.base_query import FieldFilter
+
+            query = self._collection_ref().where(filter=FieldFilter("updated_at", "<=", cutoff))
+        except ImportError:
+            query = self._collection_ref().where("updated_at", "<=", cutoff)
+        query = query.limit(max(1, int(limit)))
         snapshots = list(query.stream())
         if not snapshots:
             return []
