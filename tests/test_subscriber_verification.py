@@ -10,8 +10,10 @@ from commands.subscriber_verification import (
     SUBMISSION_COOLDOWN_SECONDS,
     YOUTUBE_CHANNEL_URL,
     format_cooldown,
+    is_proof_upload_category_name,
     is_supported_image_file,
     pending_proof_channel_expired,
+    proof_upload_channel_name,
     seconds_until_next_submission,
     select_supported_image_attachment,
     should_delete_request,
@@ -22,6 +24,12 @@ from services.subscriber_verification_store import normalize_panel, normalize_re
 class SubscriberVerificationConfigTests(unittest.TestCase):
     def test_uses_kereviz_youtube_channel_url(self):
         self.assertEqual(YOUTUBE_CHANNEL_URL, "https://www.youtube.com/@kerevizYT")
+
+    def test_uses_proofs_category_for_upload_channels(self):
+        self.assertTrue(is_proof_upload_category_name("PROOFS"))
+        self.assertTrue(is_proof_upload_category_name(" proofs "))
+        self.assertFalse(is_proof_upload_category_name("KEREVIZ BOT"))
+        self.assertEqual(proof_upload_channel_name(123), "sub-proof-123")
 
     def test_validates_screenshot_image_files(self):
         self.assertTrue(is_supported_image_file("proof.txt", "image/png"))

@@ -142,6 +142,8 @@ The Subscriber verification system stores:
 
 Subscriber verification asks members for their YouTube username first, then opens a temporary private proof upload channel in the server. Members upload one screenshot image attachment there, including on mobile clients where modal file uploads may be hidden. The channel is deleted after the request is created or after 10 minutes.
 
+Subscriber proof upload channels are created under the `PROOFS` category. The bot hides that category from `@everyone`, opens each temporary channel only for the requesting member and the bot, and cleans up stale `sub-proof-*` channels on startup.
+
 The Minecraft server command stores:
 
 - `minecraft_servers/{server_host}`

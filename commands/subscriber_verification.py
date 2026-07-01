@@ -1,4 +1,5 @@
 import asyncio
+import os
 import secrets
 from datetime import datetime, timezone
 from typing import Any
@@ -26,6 +27,8 @@ MAX_SCREENSHOT_SIZE_BYTES = 8 * 1024 * 1024
 ALLOWED_SCREENSHOT_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 PROOF_UPLOAD_TIMEOUT_SECONDS = 10 * 60
 PROOF_UPLOAD_CLEANUP_INTERVAL_SECONDS = 60
+PROOF_UPLOAD_CATEGORY_NAME = os.getenv("SUBSCRIBER_PROOF_CATEGORY_NAME", "PROOFS").strip() or "PROOFS"
+PROOF_CHANNEL_TOPIC_MARKER = "KEREVIZ_SUB_PROOF"
 
 PANEL_COLOR = 0x5865F2
 PENDING_COLOR = 0xFEE75C
@@ -58,6 +61,14 @@ def select_supported_image_attachment(attachments: list[Any] | tuple[Any, ...]) 
         ):
             return attachment
     return None
+
+
+def is_proof_upload_category_name(name: str | None) -> bool:
+    return str(name or "").strip().casefold() == PROOF_UPLOAD_CATEGORY_NAME.casefold()
+
+
+def proof_upload_channel_name(user_id: int) -> str:
+    return f"sub-proof-{int(user_id)}"
 
 
 def seconds_until_next_submission(
@@ -209,6 +220,7 @@ class SubscriberVerification(commands.Cog):
         self._proof_channel_cleanup_task: asyncio.Task | None = None
         self._panel_lock = asyncio.Lock()
         self._request_lock = asyncio.Lock()
+        self._proof_channel_lock = asyncio.Lock()
         self._pending_proof_channels: dict[int, dict[str, Any]] = {}
 
     async def initialize(self) -> None:
@@ -264,6 +276,81 @@ class SubscriberVerification(commands.Cog):
             return False
         return any(role.id == STAFF_ROLE_ID for role in user.roles)
 
+    def _proof_upload_category(self, guild: discord.Guild) -> discord.CategoryChannel | None:
+        for category in guild.categories:
+            if is_proof_upload_category_name(category.name):
+                return category
+        return None
+
+    def _proof_category_issues(
+        self,
+        guild: discord.Guild,
+        category: discord.CategoryChannel | None,
+    ) -> list[str]:
+        if category is None:
+            return [f"The proof upload category **{PROOF_UPLOAD_CATEGORY_NAME}** was not found."]
+
+        me = self._bot_member(guild)
+        if me is None:
+            return ["I could not verify my server permissions."]
+
+        perms = category.permissions_for(me)
+        issues = []
+        if not perms.view_channel:
+            issues.append(f"I need **View Channel** in the **{category.name}** category.")
+        if not perms.manage_channels:
+            issues.append(f"I need **Manage Channels** in the **{category.name}** category.")
+        return issues
+
+    async def _ensure_proof_category_privacy(
+        self,
+        guild: discord.Guild,
+        category: discord.CategoryChannel,
+    ) -> None:
+        me = self._bot_member(guild)
+        if me is None:
+            return
+
+        default_overwrite = category.overwrites_for(guild.default_role)
+        bot_overwrite = category.overwrites_for(me)
+        staff_role = guild.get_role(STAFF_ROLE_ID)
+        staff_overwrite = category.overwrites_for(staff_role) if staff_role else None
+        changed = False
+
+        if default_overwrite.view_channel is not False:
+            default_overwrite.view_channel = False
+            changed = True
+
+        if staff_overwrite is not None and staff_overwrite.view_channel is not False:
+            staff_overwrite.view_channel = False
+            changed = True
+
+        bot_updates = {
+            "view_channel": True,
+            "manage_channels": True,
+            "read_message_history": True,
+        }
+        for attr, value in bot_updates.items():
+            if getattr(bot_overwrite, attr) is not value:
+                setattr(bot_overwrite, attr, value)
+                changed = True
+
+        if not changed:
+            return
+
+        try:
+            await category.edit(
+                overwrites={
+                    **category.overwrites,
+                    guild.default_role: default_overwrite,
+                    **({staff_role: staff_overwrite} if staff_role and staff_overwrite is not None else {}),
+                    me: bot_overwrite,
+                },
+                reason="Configure private Subscriber proof upload category",
+            )
+        except (discord.Forbidden, discord.HTTPException) as exc:
+            print(f"[SUB-VERIFY] Could not configure proof category privacy: {exc}")
+
     def _setup_issues_for_channel(
         self,
         guild: discord.Guild,
@@ -316,6 +403,8 @@ class SubscriberVerification(commands.Cog):
         me = self._bot_member(guild)
         if me is None or not me.guild_permissions.manage_channels:
             issues.append("I need **Manage Channels** to create temporary proof upload channels.")
+
+        issues.extend(self._proof_category_issues(guild, self._proof_upload_category(guild)))
 
         return issues
 
@@ -532,6 +621,11 @@ class SubscriberVerification(commands.Cog):
             print("[SUB-VERIFY] Panel setup needs attention: " + " | ".join(issues))
             return
 
+        proof_category = self._proof_upload_category(panel.guild)
+        if proof_category:
+            await self._ensure_proof_category_privacy(panel.guild, proof_category)
+            await self.cleanup_orphan_proof_channels(panel.guild)
+
         message = await self._upsert_panel(panel)
         if message:
             print(f"[SUB-VERIFY] Panel ready: {message.jump_url}")
@@ -579,32 +673,50 @@ class SubscriberVerification(commands.Cog):
             print(f"[SUB-VERIFY] Could not delete proof upload channel {channel.id}: {exc}")
 
     async def cleanup_expired_proof_channels(self) -> int:
-        expired_channel_ids = [
-            channel_id
-            for channel_id, session in self._pending_proof_channels.items()
-            if pending_proof_channel_expired(session)
-        ]
+        async with self._proof_channel_lock:
+            expired_channel_ids = [
+                channel_id
+                for channel_id, session in self._pending_proof_channels.items()
+                if pending_proof_channel_expired(session)
+            ]
 
+            cleaned = 0
+            for channel_id in expired_channel_ids:
+                session = self._pending_proof_channels.pop(channel_id, None)
+                if session is None:
+                    continue
+
+                channel = self.bot.get_channel(channel_id)
+                if channel is None:
+                    try:
+                        channel = await self.bot.fetch_channel(channel_id)
+                    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                        channel = None
+
+                if isinstance(channel, discord.TextChannel):
+                    try:
+                        await channel.send("This Subscriber proof upload channel expired and will be deleted.")
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass
+                    await self._delete_proof_channel(channel, reason="Subscriber proof upload expired")
+                cleaned += 1
+            return cleaned
+
+    async def cleanup_orphan_proof_channels(self, guild: discord.Guild | None = None) -> int:
+        guilds = [guild] if guild is not None else list(self.bot.guilds)
         cleaned = 0
-        for channel_id in expired_channel_ids:
-            session = self._pending_proof_channels.pop(channel_id, None)
-            if session is None:
-                continue
-
-            channel = self.bot.get_channel(channel_id)
-            if channel is None:
-                try:
-                    channel = await self.bot.fetch_channel(channel_id)
-                except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-                    channel = None
-
-            if isinstance(channel, discord.TextChannel):
-                try:
-                    await channel.send("This Subscriber proof upload channel expired and will be deleted.")
-                except (discord.Forbidden, discord.HTTPException):
-                    pass
-                await self._delete_proof_channel(channel, reason="Subscriber proof upload expired")
-            cleaned += 1
+        async with self._proof_channel_lock:
+            active_channel_ids = set(self._pending_proof_channels)
+            for target_guild in guilds:
+                category = self._proof_upload_category(target_guild)
+                if category is None:
+                    continue
+                for channel in list(category.text_channels):
+                    if channel.id in active_channel_ids:
+                        continue
+                    if channel.name.startswith("sub-proof-") or PROOF_CHANNEL_TOPIC_MARKER in (channel.topic or ""):
+                        await self._delete_proof_channel(channel, reason="Clean up stale Subscriber proof upload channel")
+                        cleaned += 1
         return cleaned
 
     async def open_submission_modal(self, interaction: discord.Interaction) -> None:
@@ -755,10 +867,12 @@ class SubscriberVerification(commands.Cog):
         *,
         expires_at: int,
     ) -> discord.TextChannel | None:
-        private_review = await self._fetch_text_channel(PRIVATE_REVIEW_CHANNEL_ID)
-        category = private_review.category if private_review and private_review.guild.id == guild.id else None
-        staff_role = guild.get_role(STAFF_ROLE_ID)
+        category = self._proof_upload_category(guild)
+        if category is None:
+            print(f"[SUB-VERIFY] Proof upload category not found: {PROOF_UPLOAD_CATEGORY_NAME}")
+            return None
         me = self._bot_member(guild)
+        await self._ensure_proof_category_privacy(guild, category)
 
         overwrites: dict[discord.abc.Snowflake, discord.PermissionOverwrite] = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
@@ -769,13 +883,6 @@ class SubscriberVerification(commands.Cog):
                 read_message_history=True,
             ),
         }
-        if staff_role:
-            overwrites[staff_role] = discord.PermissionOverwrite(
-                view_channel=True,
-                send_messages=True,
-                attach_files=True,
-                read_message_history=True,
-            )
         if me:
             overwrites[me] = discord.PermissionOverwrite(
                 view_channel=True,
@@ -788,12 +895,12 @@ class SubscriberVerification(commands.Cog):
 
         try:
             return await guild.create_text_channel(
-                name=f"sub-proof-{member.id}",
+                name=proof_upload_channel_name(member.id),
                 category=category,
                 overwrites=overwrites,
                 topic=(
-                    f"Temporary Subscriber proof upload for {member} ({member.id}). "
-                    f"Expires at <t:{expires_at}:F>."
+                    f"{PROOF_CHANNEL_TOPIC_MARKER} | Temporary Subscriber proof upload for "
+                    f"{member} ({member.id}). Expires at {expires_at}."
                 ),
                 reason=f"Subscriber proof upload for {member} ({member.id})",
             )
@@ -823,7 +930,7 @@ class SubscriberVerification(commands.Cog):
         embed.add_field(name="YouTube Username", value=youtube_username or "Not provided", inline=True)
         embed.add_field(name="Accepted Files", value="PNG, JPG, JPEG, WEBP, or GIF under 8 MB", inline=False)
         embed.add_field(name="Expires", value=f"<t:{expires_at}:R>", inline=True)
-        embed.set_footer(text="This channel is visible only to you, staff, and the bot.")
+        embed.set_footer(text="This channel is visible only to you and the bot. Staff will receive the submitted proof.")
 
         try:
             await channel.send(
@@ -866,32 +973,33 @@ class SubscriberVerification(commands.Cog):
             )
 
         await self.cleanup_expired_proof_channels()
-        existing = self._pending_proof_channel_for_user(interaction.guild.id, interaction.user.id)
-        if existing:
-            channel_id, _session = existing
-            channel = self.bot.get_channel(channel_id)
-            if isinstance(channel, discord.TextChannel):
+        async with self._proof_channel_lock:
+            existing = self._pending_proof_channel_for_user(interaction.guild.id, interaction.user.id)
+            if existing:
+                channel_id, _session = existing
+                channel = self.bot.get_channel(channel_id)
+                if isinstance(channel, discord.TextChannel):
+                    return await interaction.response.send_message(
+                        f"Your private proof upload channel is already open: {channel.mention}\n"
+                        "Please upload your subscription screenshot there.",
+                        ephemeral=True,
+                    )
+                self._pending_proof_channels.pop(channel_id, None)
+
+            expires_at = now_ts() + PROOF_UPLOAD_TIMEOUT_SECONDS
+            channel = await self._create_proof_upload_channel(interaction.guild, interaction.user, expires_at=expires_at)
+            if channel is None:
                 return await interaction.response.send_message(
-                    f"Your private proof upload channel is already open: {channel.mention}\n"
-                    "Please upload your subscription screenshot there.",
+                    "I could not create your private proof upload channel. Please contact staff.",
                     ephemeral=True,
                 )
-            self._pending_proof_channels.pop(channel_id, None)
 
-        expires_at = now_ts() + PROOF_UPLOAD_TIMEOUT_SECONDS
-        channel = await self._create_proof_upload_channel(interaction.guild, interaction.user, expires_at=expires_at)
-        if channel is None:
-            return await interaction.response.send_message(
-                "I could not create your private proof upload channel. Please contact staff.",
-                ephemeral=True,
-            )
-
-        self._pending_proof_channels[channel.id] = {
-            "guild_id": interaction.guild.id,
-            "user_id": interaction.user.id,
-            "youtube_username": youtube_username.strip(),
-            "expires_at": expires_at,
-        }
+            self._pending_proof_channels[channel.id] = {
+                "guild_id": interaction.guild.id,
+                "user_id": interaction.user.id,
+                "youtube_username": youtube_username.strip(),
+                "expires_at": expires_at,
+            }
 
         instructions_sent = await self._send_proof_upload_instructions(
             channel,
@@ -1028,13 +1136,18 @@ class SubscriberVerification(commands.Cog):
             self._pending_proof_channels.pop(message.channel.id, None)
             return await message.channel.send("I could not find your server membership. Please try again from the server.")
 
-        self._pending_proof_channels.pop(message.channel.id, None)
-        _success, response = await self._create_request_for_member(
+        success, response = await self._create_request_for_member(
             guild,
             member,
             youtube_username=str(session["youtube_username"]),
             proof_url=attachment.url,
         )
+        if not success:
+            return await message.channel.send(
+                f"{response}\nThis temporary channel will stay open until it expires, so you can try again if needed."
+            )
+
+        self._pending_proof_channels.pop(message.channel.id, None)
         await message.channel.send(f"{response}\nThis temporary channel will be deleted shortly.")
         if isinstance(message.channel, discord.TextChannel):
             await asyncio.sleep(5)
@@ -1213,6 +1326,12 @@ class SubscriberVerification(commands.Cog):
         embed.add_field(
             name="Private Review",
             value=private_review.mention if private_review else f"`{PRIVATE_REVIEW_CHANNEL_ID}`",
+            inline=True,
+        )
+        proof_category = self._proof_upload_category(ctx.guild)
+        embed.add_field(
+            name="Proof Category",
+            value=f"**{proof_category.name}**" if proof_category else f"`{PROOF_UPLOAD_CATEGORY_NAME}`",
             inline=True,
         )
         embed.add_field(name="Pending Requests", value=str(pending_count), inline=True)
