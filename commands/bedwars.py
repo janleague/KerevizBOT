@@ -4,6 +4,7 @@ from discord.ext import commands
 from services.hypixel_client import (
     HypixelClientError,
     as_int,
+    bedwars_pro_score,
     fetch_hypixel_player,
     format_hypixel_error,
     get_rank,
@@ -15,7 +16,7 @@ class Bedwars(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="bedwars", help="Displays BedWars statistics for a given player.")
+    @commands.command(name="bedwars", aliases=["bw"], help="Displays BedWars statistics for a given player.")
     async def bedwars(self, ctx: commands.Context, username: str):
         async with ctx.typing():
             try:
@@ -46,34 +47,26 @@ class Bedwars(commands.Cog):
         bblr = ratio(beds_broken, beds_lost)
         wlr = ratio(wins, losses)
 
-        pro_score = (
-            min(wlr, 10) * 20
-            + min(fkdr, 10) * 20
-            + min(kdr, 10) * 10
-            + min(bblr, 10) * 15
-            + (min(level, 500) / 500 * 15)
+        pro_score = bedwars_pro_score(
+            wins=wins,
+            losses=losses,
+            kills=kills,
+            deaths=deaths,
+            final_kills=fkills,
+            final_deaths=fdeaths,
+            beds_broken=beds_broken,
+            beds_lost=beds_lost,
+            level=level,
         )
-        pro_score = min(100, round(pro_score))
-        bar_blocks = pro_score // 10
-        bar = "[" + ("#" * bar_blocks) + ("-" * (10 - bar_blocks)) + "]"
-
-        if pro_score >= 90:
-            comment = "Godlike performance. Truly elite."
-        elif pro_score >= 70:
-            comment = "High-level player! Hypixel knows your name."
-        elif pro_score >= 50:
-            comment = "Not bad, you're getting there!"
-        else:
-            comment = "You're learning, keep grinding!"
 
         embed = discord.Embed(
             title=f"**{displayname}** | {rank}",
-            description=f"Level: `{level} stars`",
+            description=f"Level: `{level}` \u2B50",
             color=color,
         )
         embed.add_field(
             name="Pro Score",
-            value=f"{pro_score}%\n{bar}\n*{comment}*",
+            value=f"{pro_score.score}% - **{pro_score.tier}**\n{pro_score.bar}\n*{pro_score.comment}*",
             inline=False,
         )
         embed.add_field(name="Wins", value=wins, inline=True)

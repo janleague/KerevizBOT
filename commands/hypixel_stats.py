@@ -9,6 +9,7 @@ from services.hypixel_client import (
     format_number,
     format_timestamp,
     get_rank,
+    last_game_name,
     network_level,
     ratio,
 )
@@ -69,7 +70,7 @@ class HypixelStats(commands.Cog):
         embed.add_field(name="Challenges", value=challenges_completed, inline=True)
         embed.add_field(name="First Login", value=format_timestamp(player.get("firstLogin")), inline=True)
         embed.add_field(name="Last Login", value=format_timestamp(player.get("lastLogin")), inline=True)
-        embed.add_field(name="Last Game", value=str(player.get("lastGameType") or "Unknown"), inline=True)
+        embed.add_field(name="Last Game", value=last_game_name(player), inline=True)
         embed.add_field(name="Language", value=str(player.get("userLanguage") or "Unknown"), inline=True)
         embed.add_field(name="Known As", value=bundle.username, inline=True)
 

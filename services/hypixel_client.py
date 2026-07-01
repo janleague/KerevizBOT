@@ -70,6 +70,14 @@ class HypixelPlayerBundle:
 
 
 @dataclass(slots=True)
+class ProScore:
+    score: int
+    tier: str
+    comment: str
+    bar: str
+
+
+@dataclass(slots=True)
 class _CacheEntry:
     expires_at: float
     value: Any
@@ -86,6 +94,39 @@ _cache_lock = asyncio.Lock()
 _profile_cache: dict[str, _CacheEntry] = {}
 _player_cache: dict[str, _CacheEntry] = {}
 _rate_limited_until = 0.0
+
+GAME_TYPE_NAMES = {
+    "QUAKECRAFT": "Quake",
+    "WALLS": "Walls",
+    "PAINTBALL": "Paintball",
+    "HUNGERGAMES": "Blitz Survival Games",
+    "SURVIVAL_GAMES": "Blitz Survival Games",
+    "TNTGAMES": "TNT Games",
+    "VAMPIREZ": "VampireZ",
+    "WALLS3": "Mega Walls",
+    "ARCADE": "Arcade",
+    "ARENA": "Arena",
+    "UHC": "UHC Champions",
+    "MCGO": "Cops and Crims",
+    "BATTLEGROUND": "Warlords",
+    "SUPER_SMASH": "Smash Heroes",
+    "GINGERBREAD": "Turbo Kart Racers",
+    "HOUSING": "Housing",
+    "SKYWARS": "SkyWars",
+    "SPEED_UHC": "Speed UHC",
+    "SKYCLASH": "SkyClash",
+    "LEGACY": "Classic Games",
+    "PROTOTYPE": "Prototype",
+    "BEDWARS": "Bed Wars",
+    "MURDER_MYSTERY": "Murder Mystery",
+    "BUILD_BATTLE": "Build Battle",
+    "DUELS": "Duels",
+    "SKYBLOCK": "SkyBlock",
+    "PIT": "The Pit",
+    "REPLAY": "Replay",
+    "SMP": "SMP",
+    "WOOL_GAMES": "Wool Wars",
+}
 
 
 def clear_hypixel_cache() -> None:
@@ -227,6 +268,158 @@ def format_retry_after(seconds: int | None) -> str:
         return f"{minutes}m"
     hours = (minutes + 59) // 60
     return f"{hours}h"
+
+
+def last_game_name(player: dict[str, Any]) -> str:
+    for key in ("mostRecentGameType", "lastGameType", "last_game_type", "lastGame", "gameType"):
+        value = player.get(key)
+        if value:
+            return clean_game_type_name(value)
+    return "Unknown"
+
+
+def clean_game_type_name(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "Unknown"
+    key = raw.replace("-", "_").replace(" ", "_").upper()
+    return GAME_TYPE_NAMES.get(key, raw.replace("_", " ").title())
+
+
+def score_bar(score: int) -> str:
+    filled = min(10, max(0, round(int(score) / 10)))
+    return ("\U0001F7E9" * filled) + ("\u2B1C" * (10 - filled))
+
+
+def score_tier(score: int) -> tuple[str, str]:
+    if score >= 90:
+        return "Elite", "Elite sweat. Very dangerous."
+    if score >= 75:
+        return "Pro", "Pro-level stats. Strong player."
+    if score >= 60:
+        return "Skilled", "Skilled player. Real threat."
+    if score >= 40:
+        return "Grinder", "Solid grinder, not pro yet."
+    if score >= 20:
+        return "Casual", "Casual stats. Keep grinding."
+    return "Rookie", "Needs serious practice."
+
+
+def bedwars_pro_score(
+    *,
+    wins: int,
+    losses: int,
+    kills: int,
+    deaths: int,
+    final_kills: int,
+    final_deaths: int,
+    beds_broken: int,
+    beds_lost: int,
+    level: int,
+) -> ProScore:
+    games = max(0, wins + losses)
+    wlr = ratio(wins, losses)
+    fkdr = ratio(final_kills, final_deaths)
+    kdr = ratio(kills, deaths)
+    bblr = ratio(beds_broken, beds_lost)
+
+    raw = (
+        _scale(wlr, [(0, 0), (0.25, 14), (0.5, 34), (1, 58), (2, 78), (4, 92), (8, 100)]) * 0.25
+        + _scale(fkdr, [(0, 0), (0.5, 18), (1, 38), (2, 62), (4, 82), (8, 95), (12, 100)]) * 0.35
+        + _scale(kdr, [(0, 0), (0.5, 20), (1, 45), (2, 68), (4, 88), (8, 100)]) * 0.15
+        + _scale(bblr, [(0, 0), (0.5, 25), (1, 52), (2, 75), (4, 92), (8, 100)]) * 0.15
+        + _scale(level, [(0, 0), (25, 10), (50, 22), (100, 40), (200, 65), (500, 95), (1000, 100)]) * 0.10
+    )
+
+    score = raw * _sample_confidence(games, 1500)
+    if games < 25:
+        score -= 18
+    elif games < 100:
+        score -= 8
+    if games >= 50 and wlr < 0.25:
+        score -= 12
+    elif games >= 50 and wlr < 0.5:
+        score -= 6
+    if final_deaths >= 50 and fkdr < 0.75:
+        score -= 10
+    if deaths >= 100 and kdr < 0.6:
+        score -= 5
+    if games >= 1000 and wlr >= 2 and fkdr >= 4 and bblr >= 2:
+        score += 6
+    if level >= 200 and fkdr >= 3:
+        score += 4
+
+    return _build_pro_score(score)
+
+
+def skywars_pro_score(
+    *,
+    wins: int,
+    losses: int,
+    kills: int,
+    deaths: int,
+    level: int,
+) -> ProScore:
+    games = max(0, wins + losses)
+    wlr = ratio(wins, losses)
+    kdr = ratio(kills, deaths)
+
+    raw = (
+        _scale(wlr, [(0, 0), (0.25, 14), (0.5, 34), (1, 58), (2, 78), (4, 92), (8, 100)]) * 0.32
+        + _scale(kdr, [(0, 0), (0.5, 18), (1, 42), (2, 65), (4, 85), (8, 100)]) * 0.38
+        + _scale(wins, [(0, 0), (100, 20), (500, 45), (1500, 70), (5000, 92), (10000, 100)]) * 0.15
+        + _scale(level, [(0, 0), (5, 15), (10, 32), (15, 48), (25, 72), (40, 90), (60, 100)]) * 0.15
+    )
+
+    score = raw * _sample_confidence(games, 2000)
+    if games < 25:
+        score -= 18
+    elif games < 100:
+        score -= 8
+    if games >= 50 and wlr < 0.25:
+        score -= 12
+    elif games >= 50 and wlr < 0.5:
+        score -= 6
+    if deaths >= 100 and kdr < 0.7:
+        score -= 8
+    if games >= 1500 and wlr >= 2 and kdr >= 3:
+        score += 6
+    if level >= 25 and kdr >= 2.5:
+        score += 4
+
+    return _build_pro_score(score)
+
+
+def _scale(value: int | float, points: list[tuple[float, float]]) -> float:
+    current = float(value or 0)
+    if current <= points[0][0]:
+        return points[0][1]
+    for (left_value, left_score), (right_value, right_score) in zip(points, points[1:]):
+        if current <= right_value:
+            span = right_value - left_value
+            if span <= 0:
+                return right_score
+            progress = (current - left_value) / span
+            return left_score + (right_score - left_score) * progress
+    return points[-1][1]
+
+
+def _sample_confidence(sample_size: int, strong_sample: int) -> float:
+    sample = max(0, int(sample_size or 0))
+    if sample <= 0:
+        return 0.45
+    return min(1.0, 0.45 + 0.55 * (math.log10(sample + 1) / math.log10(strong_sample + 1)))
+
+
+def _build_pro_score(score: float) -> ProScore:
+    final_score = min(100, max(0, round(score)))
+    tier, comment = score_tier(final_score)
+    return ProScore(
+        score=final_score,
+        tier=tier,
+        comment=comment,
+        bar=score_bar(final_score),
+    )
 
 
 async def _get_cache(cache: dict[str, _CacheEntry], key: str) -> Any | None:

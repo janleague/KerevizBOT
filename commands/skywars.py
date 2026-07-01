@@ -10,6 +10,7 @@ from services.hypixel_client import (
     format_hypixel_error,
     get_rank,
     ratio,
+    skywars_pro_score,
 )
 
 
@@ -17,7 +18,7 @@ class Skywars(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="skywars", help="Displays SkyWars statistics for a given player.")
+    @commands.command(name="skywars", aliases=["sw"], help="Displays SkyWars statistics for a given player.")
     async def skywars(self, ctx: commands.Context, username: str):
         async with ctx.typing():
             try:
@@ -53,33 +54,22 @@ class Skywars(commands.Cog):
         kdr = ratio(kills, deaths)
         wlr = ratio(wins, losses)
 
-        pro_score = (
-            min(wlr, 10) * 25
-            + min(kdr, 10) * 35
-            + min(wins, 1000) / 1000 * 20
-            + (min(level, 60) / 60 * 20)
+        pro_score = skywars_pro_score(
+            wins=wins,
+            losses=losses,
+            kills=kills,
+            deaths=deaths,
+            level=level,
         )
-        pro_score = min(100, round(pro_score))
-        bar_blocks = pro_score // 10
-        bar = "[" + ("#" * bar_blocks) + ("-" * (10 - bar_blocks)) + "]"
-
-        if pro_score >= 90:
-            comment = "Godlike performance. Truly elite."
-        elif pro_score >= 70:
-            comment = "High-level player! Hypixel knows your name."
-        elif pro_score >= 50:
-            comment = "Not bad, you're getting there!"
-        else:
-            comment = "You're learning, keep grinding!"
 
         embed = discord.Embed(
             title=f"**{displayname}** | {rank}",
-            description=f"Level: `{level} stars`",
+            description=f"Level: `{level}` \u2B50",
             color=color,
         )
         embed.add_field(
             name="Pro Score",
-            value=f"{pro_score}%\n{bar}\n*{comment}*",
+            value=f"{pro_score.score}% - **{pro_score.tier}**\n{pro_score.bar}\n*{pro_score.comment}*",
             inline=False,
         )
         embed.add_field(name="Wins", value=wins, inline=True)

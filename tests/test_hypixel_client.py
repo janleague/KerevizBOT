@@ -3,12 +3,15 @@ import unittest
 from services.hypixel_client import (
     HypixelRateLimit,
     MinecraftPlayerNotFound,
+    bedwars_pro_score,
     clean_username,
     clear_hypixel_cache,
     fetch_player_data,
     format_hypixel_error,
+    last_game_name,
     parse_rate_limit_headers,
     resolve_minecraft_profile,
+    skywars_pro_score,
 )
 
 
@@ -115,6 +118,47 @@ class HypixelClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(headers.limit, 120)
         self.assertEqual(headers.remaining, 4)
         self.assertEqual(headers.reset_after, 12)
+
+    def test_last_game_uses_new_hypixel_field_names(self):
+        self.assertEqual(last_game_name({"mostRecentGameType": "BEDWARS"}), "Bed Wars")
+        self.assertEqual(last_game_name({"lastGameType": "SkyWars"}), "SkyWars")
+        self.assertEqual(last_game_name({}), "Unknown")
+
+    def test_bedwars_pro_score_separates_rookies_from_elite_players(self):
+        rookie = bedwars_pro_score(
+            wins=116,
+            losses=658,
+            kills=995,
+            deaths=2254,
+            final_kills=620,
+            final_deaths=650,
+            beds_broken=495,
+            beds_lost=598,
+            level=21,
+        )
+        elite = bedwars_pro_score(
+            wins=5000,
+            losses=1300,
+            kills=30000,
+            deaths=8000,
+            final_kills=18000,
+            final_deaths=3000,
+            beds_broken=9000,
+            beds_lost=2500,
+            level=350,
+        )
+
+        self.assertLess(rookie.score, 20)
+        self.assertEqual(rookie.tier, "Rookie")
+        self.assertGreaterEqual(elite.score, 90)
+        self.assertEqual(elite.tier, "Elite")
+
+    def test_skywars_pro_score_separates_casual_from_pro_players(self):
+        casual = skywars_pro_score(wins=80, losses=700, kills=900, deaths=2200, level=7)
+        pro = skywars_pro_score(wins=3500, losses=1200, kills=22000, deaths=5500, level=32)
+
+        self.assertLess(casual.score, 30)
+        self.assertGreaterEqual(pro.score, 80)
 
 
 if __name__ == "__main__":
