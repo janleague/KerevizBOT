@@ -7,8 +7,11 @@ COLLECTION_NAME = "deleted_image_cache"
 
 
 class DeletedImageStore:
+    def _collection_ref(self):
+        return get_firestore_client().collection(COLLECTION_NAME)
+
     def _message_ref(self, message_id: int | str):
-        return get_firestore_client().collection(COLLECTION_NAME).document(str(message_id))
+        return self._collection_ref().document(str(message_id))
 
     async def save_message(self, message_id: int | str, payload: dict[str, Any]) -> None:
         await run_firestore(self._save_message_sync, str(message_id), payload)
@@ -37,3 +40,23 @@ class DeletedImageStore:
 
     def _delete_message_sync(self, message_id: str) -> None:
         self._message_ref(message_id).delete()
+
+    async def delete_old_messages(self, cutoff, limit: int = 200) -> list[dict[str, Any]]:
+        return await run_firestore(self._delete_old_messages_sync, cutoff, int(limit))
+
+    def _delete_old_messages_sync(self, cutoff, limit: int) -> list[dict[str, Any]]:
+        db = get_firestore_client()
+        query = self._collection_ref().where("updated_at", "<=", cutoff).limit(max(1, int(limit)))
+        snapshots = list(query.stream())
+        if not snapshots:
+            return []
+
+        batch = db.batch()
+        deleted_payloads: list[dict[str, Any]] = []
+        for snapshot in snapshots:
+            payload = snapshot.to_dict() or {}
+            payload.setdefault("message_id", snapshot.id)
+            deleted_payloads.append(payload)
+            batch.delete(snapshot.reference)
+        batch.commit()
+        return deleted_payloads

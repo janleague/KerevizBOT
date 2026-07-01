@@ -82,6 +82,7 @@ FIRESTORE_ALERT_CHANNEL_ID=1521808241233760337
 FIRESTORE_STORAGE_LIMIT_BYTES=1073741824
 FIRESTORE_STORAGE_WARN_THRESHOLDS=70,85,95
 FIRESTORE_STORAGE_CHECK_INTERVAL=21600
+DELETED_IMAGE_CACHE_RETENTION_DAYS=30
 ```
 
 3. Place your Firebase service account file in the project root:
@@ -156,6 +157,8 @@ Deleted image logging stores temporary metadata in:
 
 - `deleted_image_cache/{message_id}`
 
+Deleted image cache metadata older than `DELETED_IMAGE_CACHE_RETENTION_DAYS` is removed automatically. The default retention is 30 days.
+
 Hypixel API configuration stores:
 
 - `bot_state/hypixel_api`
@@ -167,6 +170,7 @@ Firestore storage alert state stores:
 Legacy local files such as `last_video_id.txt`, `invite_tracker.json`, and `giveaways.json` are migrated automatically when possible.
 The bundled `servers.txt` file is used as the initial seed list for Minecraft servers.
 Deleted image files are cached locally in `deleted_image_cache/` until the deleted-image log is sent.
+Old local deleted-image cache files are also cleaned during the same retention job.
 
 ### Firestore Storage Alerts
 

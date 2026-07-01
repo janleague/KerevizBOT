@@ -1,5 +1,7 @@
+import asyncio
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,9 @@ CACHE_DIR = Path("deleted_image_cache")
 IMAGE_EXTENSIONS = {".apng", ".avif", ".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp"}
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_FILES_PER_MESSAGE = 10
+DEFAULT_CACHE_RETENTION_DAYS = 30
+DEFAULT_CACHE_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
+DEFAULT_CACHE_CLEANUP_BATCH_SIZE = 200
 
 
 def deleted_image_log_channel_id() -> int:
@@ -24,6 +29,23 @@ def deleted_image_log_channel_id() -> int:
         except ValueError:
             pass
     return DEFAULT_LOG_CHANNEL_ID
+
+
+def env_int(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value:
+        try:
+            return int(raw_value.strip().strip('"'))
+        except ValueError:
+            pass
+    return default
+
+
+def deleted_image_cache_cutoff(retention_days: int, *, current_time: datetime | None = None) -> datetime:
+    now = current_time or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return now.astimezone(timezone.utc) - timedelta(days=max(1, int(retention_days)))
 
 
 def safe_filename(filename: str) -> str:
@@ -37,6 +59,37 @@ class DeletedImageLogs(commands.Cog):
         self.store = DeletedImageStore()
         self.log_channel_id = deleted_image_log_channel_id()
         self._memory_cache: dict[int, dict[str, Any]] = {}
+        self.retention_days = env_int("DELETED_IMAGE_CACHE_RETENTION_DAYS", DEFAULT_CACHE_RETENTION_DAYS)
+        self.cleanup_interval = env_int(
+            "DELETED_IMAGE_CACHE_CLEANUP_INTERVAL",
+            DEFAULT_CACHE_CLEANUP_INTERVAL_SECONDS,
+        )
+        self.cleanup_batch_size = env_int("DELETED_IMAGE_CACHE_CLEANUP_BATCH_SIZE", DEFAULT_CACHE_CLEANUP_BATCH_SIZE)
+        self._cleanup_task: asyncio.Task | None = None
+
+    def cog_unload(self) -> None:
+        if self._cleanup_task and not self._cleanup_task.done():
+            self._cleanup_task.cancel()
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        self._start_cleanup_runner()
+
+    def _start_cleanup_runner(self) -> None:
+        if self._cleanup_task and not self._cleanup_task.done():
+            return
+        self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+
+    async def _cleanup_loop(self) -> None:
+        await self.bot.wait_until_ready()
+        while not self.bot.is_closed():
+            try:
+                await self.cleanup_old_cache_entries()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(f"[DELETED-IMAGE-LOGS] Cache cleanup failed: {exc}")
+            await asyncio.sleep(max(3600, int(self.cleanup_interval)))
 
     @staticmethod
     def _is_image_attachment(attachment: discord.Attachment) -> bool:
@@ -160,6 +213,63 @@ class DeletedImageLogs(commands.Cog):
             except OSError:
                 pass
 
+    @staticmethod
+    def _delete_empty_cache_dirs() -> None:
+        if not CACHE_DIR.exists():
+            return
+        for path in sorted(CACHE_DIR.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+            if not path.is_dir():
+                continue
+            try:
+                path.rmdir()
+            except OSError:
+                pass
+
+    @staticmethod
+    def _delete_old_local_cache_files(cutoff: datetime) -> int:
+        if not CACHE_DIR.exists():
+            return 0
+
+        cutoff_ts = cutoff.timestamp()
+        deleted = 0
+        for path in CACHE_DIR.rglob("*"):
+            if not path.is_file():
+                continue
+            try:
+                if path.stat().st_mtime <= cutoff_ts:
+                    path.unlink()
+                    deleted += 1
+            except OSError:
+                pass
+        DeletedImageLogs._delete_empty_cache_dirs()
+        return deleted
+
+    async def cleanup_old_cache_entries(self) -> int:
+        cutoff = deleted_image_cache_cutoff(self.retention_days)
+        deleted_docs = 0
+
+        while True:
+            payloads = await self.store.delete_old_messages(cutoff, limit=self.cleanup_batch_size)
+            if not payloads:
+                break
+            deleted_docs += len(payloads)
+            for payload in payloads:
+                self._delete_cached_files(payload)
+                try:
+                    self._memory_cache.pop(int(payload.get("message_id")), None)
+                except (TypeError, ValueError):
+                    pass
+            if len(payloads) < self.cleanup_batch_size:
+                break
+
+        deleted_files = self._delete_old_local_cache_files(cutoff)
+        if deleted_docs or deleted_files:
+            print(
+                "[DELETED-IMAGE-LOGS] Deleted "
+                f"{deleted_docs} old Firestore cache record(s) and {deleted_files} old local cache file(s)."
+            )
+        return deleted_docs
+
     async def _send_deleted_image_log(self, message: discord.Message, data: dict[str, Any]) -> bool:
         channel = await self._log_channel()
         if channel is None:
@@ -234,4 +344,7 @@ class DeletedImageLogs(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(DeletedImageLogs(bot))
+    cog = DeletedImageLogs(bot)
+    await bot.add_cog(cog)
+    if bot.is_ready():
+        cog._start_cleanup_runner()
