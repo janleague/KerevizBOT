@@ -60,6 +60,30 @@ YT_FEED_TIMEOUT = aiohttp.ClientTimeout(total=15)
 YT_FEED_MAX_ATTEMPTS = 3
 YT_FEED_RETRY_STATUSES = {404, 429, 500, 502, 503, 504}
 YT_ERROR_LOG_COOLDOWN = 3600
+COMMAND_EXTENSION_FILES = {
+    "activate.py",
+    "auto_role.py",
+    "ban.py",
+    "bedwars.py",
+    "clear.py",
+    "deleted_image_logs.py",
+    "firestore_monitor.py",
+    "gif.py",
+    "giveaway.py",
+    "guard.py",
+    "help.py",
+    "hypixel_stats.py",
+    "invite_tracker.py",
+    "skyblock.py",
+    "skywars.py",
+    "subscriber_verification.py",
+    "timeout.py",
+    "unban.py",
+}
+FUN_EXTENSION_FILES = {
+    "fun_commands.py",
+    "randomminecraftserver.py",
+}
 
 # ===================== DISCORD SETUP =====================
 intents = discord.Intents.default()
@@ -824,21 +848,23 @@ async def on_ready():
 
     # Load command extensions
     if not extensions_loaded:
-        for folder, prefix in (("./commands", "commands"), ("./commands/fun", "commands.fun")):
+        extension_sources = (
+            ("./commands", "commands", COMMAND_EXTENSION_FILES),
+            ("./commands/fun", "commands.fun", FUN_EXTENSION_FILES),
+        )
+        for folder, prefix, allowed_files in extension_sources:
             if os.path.isdir(folder):
                 for fn in os.listdir(folder):
-                    if fn.endswith(".py"):
-                        if "kerevizcraft" in fn.lower():
-                            await send_log(f"[EXT] Skipped removed KerevizCraft module: {fn}")
-                            continue
-                        module = f"{prefix}.{fn[:-3]}"
-                        if module in bot.extensions:
-                            continue
-                        try:
-                            await bot.load_extension(module)
-                            await send_log(f"[EXT] Loaded: {('fun/' if 'fun' in prefix else '')}{fn}")
-                        except Exception as exc:
-                            await send_log(f"[EXT] Failed: {fn} -> {exc}")
+                    if not fn.endswith(".py") or fn not in allowed_files:
+                        continue
+                    module = f"{prefix}.{fn[:-3]}"
+                    if module in bot.extensions:
+                        continue
+                    try:
+                        await bot.load_extension(module)
+                        await send_log(f"[EXT] Loaded: {('fun/' if 'fun' in prefix else '')}{fn}")
+                    except Exception as exc:
+                        await send_log(f"[EXT] Failed: {fn} -> {exc}")
         extensions_loaded = True
 
     removed_kerevizcraft = remove_kerevizcraft_commands()
