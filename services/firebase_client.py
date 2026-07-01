@@ -26,6 +26,10 @@ def _credential_path() -> str | None:
     return str(path.resolve())
 
 
+def get_firebase_credential_path() -> str | None:
+    return _credential_path()
+
+
 def get_firestore_client():
     global _db, _firestore_module
 

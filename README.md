@@ -11,7 +11,8 @@ A polished, modular Discord bot built for community management and creator-focus
 - **Invite tracking**: tracks invite usage, member joins/leaves, reward roles, leaderboards, and logging.
 - **Giveaways**: persistent button-based giveaways with rerolls, role requirements, bonus entries, and recovery for missed announcements.
 - **Reaction roles**: persistent notification-role panel for YouTube and giveaway pings.
-- **Subscriber verification**: modal-based Subscriber role request flow with private proof review, public status logs, and one request per member every 24 hours.
+- **Subscriber verification**: modal-based Subscriber role request flow with temporary private proof upload channels, staff review, public status logs, and one request per member every 24 hours.
+- **Firestore storage alerts**: checks Firestore data and index storage and warns staff before the free-tier storage limit is reached.
 - **AI commands**: free text and image utilities powered by Pollinations.
 - **Hypixel stats**: profile, BedWars, SkyWars, and Duels player statistics with clean Discord embeds.
 - **Minecraft server discovery**: random live server lookup from a Firestore-backed server list.
@@ -77,6 +78,10 @@ POLLINATIONS_API_KEY=optional-pollinations-key
 GITHUB_URL=https://github.com/your-name/your-repo
 FIREBASE_CREDENTIALS_PATH=firebase-service-account.json
 FIREBASE_PROJECT_ID=your-firebase-project-id
+FIRESTORE_ALERT_CHANNEL_ID=1521808241233760337
+FIRESTORE_STORAGE_LIMIT_BYTES=1073741824
+FIRESTORE_STORAGE_WARN_THRESHOLDS=70,85,95
+FIRESTORE_STORAGE_CHECK_INTERVAL=21600
 ```
 
 3. Place your Firebase service account file in the project root:
@@ -135,6 +140,8 @@ The Subscriber verification system stores:
 - `subscriber_verifications/{request_id}`
 - `subscriber_verification_panels/{guild_id}`
 
+Subscriber verification asks members for their YouTube username first, then opens a temporary private proof upload channel in the server. Members upload one screenshot image attachment there, including on mobile clients where modal file uploads may be hidden. The channel is deleted after the request is created or after 10 minutes.
+
 The Minecraft server command stores:
 
 - `minecraft_servers/{server_host}`
@@ -151,9 +158,34 @@ Hypixel API configuration stores:
 
 - `bot_state/hypixel_api`
 
+Firestore storage alert state stores:
+
+- `bot_state/firestore_storage_alert`
+
 Legacy local files such as `last_video_id.txt`, `invite_tracker.json`, and `giveaways.json` are migrated automatically when possible.
 The bundled `servers.txt` file is used as the initial seed list for Minecraft servers.
 Deleted image files are cached locally in `deleted_image_cache/` until the deleted-image log is sent.
+
+### Firestore Storage Alerts
+
+The bot checks the Cloud Monitoring metric `firestore.googleapis.com/storage/data_and_index_storage_bytes` every 6 hours and posts alerts to `FIRESTORE_ALERT_CHANNEL_ID`.
+
+Defaults:
+
+- Alert channel: `1521808241233760337`
+- Storage limit: `1073741824` bytes (1 GiB)
+- Warning thresholds: `70,85,95`
+- Duplicate suppression state: `bot_state/firestore_storage_alert`
+
+The Firebase service account needs the Google Cloud IAM role `roles/monitoring.viewer` on project `kerevizbot`. Without that role, the bot sends a setup warning to the alert channel once per 24 hours.
+
+Recommended Google Cloud backup alert:
+
+1. Open Google Cloud Console > Monitoring > Alerting.
+2. Create a notification channel, such as Email.
+3. Create an alerting policy for metric `firestore.googleapis.com/storage/data_and_index_storage_bytes`.
+4. Add conditions for 70%, 85%, and 95% of the 1 GiB limit, or equivalent byte values.
+5. Attach the notification channel and save the policy.
 
 ## Commands
 
@@ -177,6 +209,8 @@ Deleted image files are cached locally in `deleted_image_cache/` until the delet
 - `!reactionroles sync` - Grant missing notification roles from the current panel reactions.
 - `!subverify` - Show the Subscriber verification panel status.
 - `!subverify post` - Create or refresh the Subscriber verification panel.
+- `!firestoreusage` - Show current Firestore storage usage.
+- `!firestoreusage test` - Send a test Firestore storage alert.
 - `/ban`
 - `/timeout`
 - `/clear`

@@ -3,4 +3,5 @@ psutil
 aiohttp
 python-dotenv
 firebase-admin
+google-auth
 Pillow

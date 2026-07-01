@@ -2,6 +2,8 @@ import unittest
 
 from commands.subscriber_verification import (
     SubscriberRejectionModal,
+    SubscriberVerificationModal,
+    PROOF_UPLOAD_TIMEOUT_SECONDS,
     REQUEST_RETENTION_SECONDS,
     STAFF_ROLE_ID,
     SubscriberVerification,
@@ -9,9 +11,10 @@ from commands.subscriber_verification import (
     YOUTUBE_CHANNEL_URL,
     format_cooldown,
     is_supported_image_file,
+    pending_proof_channel_expired,
     seconds_until_next_submission,
+    select_supported_image_attachment,
     should_delete_request,
-    valid_http_url,
 )
 from services.subscriber_verification_store import normalize_panel, normalize_request
 
@@ -27,11 +30,20 @@ class SubscriberVerificationConfigTests(unittest.TestCase):
         self.assertFalse(is_supported_image_file("proof.pdf", "application/pdf"))
         self.assertFalse(is_supported_image_file("proof.txt", None))
 
-    def test_accepts_pasted_http_screenshot_urls(self):
-        self.assertTrue(valid_http_url("https://cdn.discordapp.com/example.png"))
-        self.assertTrue(valid_http_url("http://example.com/proof.jpg"))
-        self.assertFalse(valid_http_url("ftp://example.com/proof.jpg"))
-        self.assertFalse(valid_http_url("not a url"))
+    def test_selects_supported_proof_attachment(self):
+        class Attachment:
+            def __init__(self, filename, content_type):
+                self.filename = filename
+                self.content_type = content_type
+
+        image = Attachment("proof.png", "image/png")
+        self.assertIs(select_supported_image_attachment([Attachment("proof.pdf", "application/pdf"), image]), image)
+        self.assertIsNone(select_supported_image_attachment([Attachment("proof.txt", "text/plain")]))
+
+    def test_pending_proof_channel_expiry(self):
+        session = {"expires_at": 1000 + PROOF_UPLOAD_TIMEOUT_SECONDS}
+        self.assertFalse(pending_proof_channel_expired(session, current_ts=1000))
+        self.assertTrue(pending_proof_channel_expired(session, current_ts=1000 + PROOF_UPLOAD_TIMEOUT_SECONDS))
 
     def test_member_can_submit_once_per_24_hours(self):
         records = {
@@ -102,6 +114,16 @@ class SubscriberVerificationConfigTests(unittest.TestCase):
         cog = SubscriberVerification(bot=None)
         modal = SubscriberRejectionModal(cog, review_message_id=123)
         self.assertFalse(modal.reason.required)
+
+    def test_submission_modal_explains_temporary_channel_flow(self):
+        cog = SubscriberVerification(bot=None)
+        modal = SubscriberVerificationModal(cog)
+        child_types = [type(child).__name__ for child in modal.children]
+        text_content = "\n".join(getattr(child, "content", "") for child in modal.children)
+
+        self.assertEqual(child_types, ["TextDisplay", "TextInput"])
+        self.assertIn("private temporary channel", text_content)
+        self.assertNotIn("Screenshot image URL", text_content)
 
 
 class SubscriberVerificationStoreTests(unittest.TestCase):
