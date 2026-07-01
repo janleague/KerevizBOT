@@ -5,6 +5,8 @@ from services.firestore_storage_monitor import (
     DEFAULT_LIMIT_BYTES,
     classify_threshold,
     calculate_percent,
+    google_error_message,
+    is_billing_required_message,
     normalize_alert_state,
     parse_monitoring_timeseries,
     parse_thresholds,
@@ -83,6 +85,13 @@ class FirestoreStorageMonitorTests(unittest.TestCase):
         self.assertTrue(should_send_permission_alert(None, current_ts=100))
         self.assertFalse(should_send_permission_alert(100, current_ts=100 + 3600))
         self.assertTrue(should_send_permission_alert(100, current_ts=100 + 24 * 60 * 60))
+
+    def test_detects_billing_required_google_error(self):
+        body = '{"error":{"message":"This API method requires billing to be enabled."}}'
+        message = google_error_message(body)
+        self.assertEqual(message, "This API method requires billing to be enabled.")
+        self.assertTrue(is_billing_required_message(message))
+        self.assertFalse(is_billing_required_message("Permission monitoring.timeSeries.list denied"))
 
 
 if __name__ == "__main__":

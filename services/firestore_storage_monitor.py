@@ -32,6 +32,10 @@ class FirestoreMonitoringPermissionError(FirestoreMonitoringError):
     pass
 
 
+class FirestoreMonitoringBillingError(FirestoreMonitoringPermissionError):
+    pass
+
+
 @dataclass(frozen=True)
 class FirestoreStorageUsage:
     used_bytes: int
@@ -147,6 +151,22 @@ def _point_numeric_value(point: dict[str, Any]) -> int | None:
         return int(float(raw_value))
     except (TypeError, ValueError):
         return None
+
+
+def google_error_message(body: str) -> str:
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return body.strip()
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if isinstance(error, dict) and error.get("message"):
+        return str(error["message"]).strip()
+    return body.strip()
+
+
+def is_billing_required_message(message: str) -> bool:
+    normalized = message.casefold()
+    return "requires billing to be enabled" in normalized or "enable billing" in normalized
 
 
 def parse_monitoring_timeseries(payload: dict[str, Any]) -> tuple[int, datetime | None, int]:
@@ -309,10 +329,11 @@ class FirestoreStorageMonitorClient:
                     page = json.loads(response.read().decode("utf-8"))
             except urllib.error.HTTPError as exc:
                 body = exc.read().decode("utf-8", "replace") if exc.fp else ""
+                message = google_error_message(body)
                 if exc.code == 403:
-                    raise FirestoreMonitoringPermissionError(
-                        "Cloud Monitoring denied access. Grant roles/monitoring.viewer to the Firebase service account."
-                    ) from exc
+                    if is_billing_required_message(message):
+                        raise FirestoreMonitoringBillingError(message) from exc
+                    raise FirestoreMonitoringPermissionError(f"Cloud Monitoring denied access: {message}") from exc
                 raise FirestoreMonitoringError(f"Cloud Monitoring returned HTTP {exc.code}: {body[:300]}") from exc
             except urllib.error.URLError as exc:
                 raise FirestoreMonitoringError(f"Cloud Monitoring request failed: {exc.reason}") from exc

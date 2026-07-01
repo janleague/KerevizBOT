@@ -12,6 +12,7 @@ from services.firestore_storage_monitor import (
     DEFAULT_THRESHOLDS,
     METRIC_TYPE,
     FirestoreMonitoringError,
+    FirestoreMonitoringBillingError,
     FirestoreMonitoringPermissionError,
     FirestoreStorageAlertStore,
     FirestoreStorageMonitorClient,
@@ -159,6 +160,26 @@ class FirestoreStorageMonitor(commands.Cog):
         embed.set_footer(text="Kereviz Firestore Monitor")
         return embed
 
+    def _billing_embed(self, error: Exception) -> discord.Embed:
+        embed = discord.Embed(
+            title="Firestore Storage Monitor Billing Required",
+            description="Cloud Monitoring refused the Firestore storage metric because billing is not enabled.",
+            color=discord.Color.orange(),
+        )
+        embed.add_field(name="Project", value=f"`{self.project_id or 'not configured'}`", inline=True)
+        embed.add_field(name="Metric", value=f"`{METRIC_TYPE}`", inline=False)
+        embed.add_field(
+            name="What to do",
+            value=(
+                "Enable billing for the Google Cloud project, then run `!firestoreusage` again. "
+                "The Monitoring Viewer role is already the correct IAM role."
+            ),
+            inline=False,
+        )
+        embed.add_field(name="Google API Error", value=str(error)[:1000], inline=False)
+        embed.set_footer(text="Kereviz Firestore Monitor")
+        return embed
+
     def _status_embed(self, usage: FirestoreStorageUsage) -> discord.Embed:
         level = classify_threshold(usage.percent, self.thresholds)
         severity, color = _severity_for_level(level)
@@ -188,14 +209,15 @@ class FirestoreStorageMonitor(commands.Cog):
         )
         return True
 
-    async def _send_permission_alert(self, error: Exception) -> bool:
+    async def _send_setup_alert(self, error: Exception) -> bool:
         channel = await self._alert_channel()
         if channel is None:
             return False
         content = self._owner_ping()
+        embed = self._billing_embed(error) if isinstance(error, FirestoreMonitoringBillingError) else self._permission_embed(error)
         await channel.send(
             content=content,
-            embed=self._permission_embed(error),
+            embed=embed,
             allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
         )
         return True
@@ -203,11 +225,11 @@ class FirestoreStorageMonitor(commands.Cog):
     async def check_and_alert(self, *, force_permission_alert: bool = False) -> FirestoreStorageUsage | None:
         try:
             usage = await self.client.fetch_usage()
-        except FirestoreMonitoringPermissionError as exc:
+        except (FirestoreMonitoringBillingError, FirestoreMonitoringPermissionError) as exc:
             state = await self.store.load_state()
             current_ts = int(time.time())
             if force_permission_alert or should_send_permission_alert(state.get("last_permission_alert_at"), current_ts):
-                if await self._send_permission_alert(exc):
+                if await self._send_setup_alert(exc):
                     await self.store.record_permission_alert(current_ts, str(exc))
             return None
         except FirestoreMonitoringError as exc:
@@ -246,8 +268,9 @@ class FirestoreStorageMonitor(commands.Cog):
 
         try:
             usage = await self.client.fetch_usage()
+        except FirestoreMonitoringBillingError as exc:
+            return await ctx.send(embed=self._billing_embed(exc))
         except FirestoreMonitoringPermissionError as exc:
-            await self.check_and_alert(force_permission_alert=True)
             return await ctx.send(embed=self._permission_embed(exc))
         except FirestoreMonitoringError as exc:
             return await ctx.send(f"Firestore storage check failed: {exc}")
