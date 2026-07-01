@@ -5,6 +5,7 @@ from services.hypixel_client import (
     HypixelClientError,
     as_int,
     fetch_hypixel_player,
+    format_hypixel_error,
     format_number,
     format_timestamp,
     get_rank,
@@ -30,10 +31,11 @@ class HypixelStats(commands.Cog):
 
     @commands.command(name="hstats", aliases=["hypixel"], help="Show a player's general Hypixel profile stats.")
     async def hypixel_stats(self, ctx: commands.Context, username: str):
-        try:
-            bundle = await fetch_hypixel_player(self.bot.HYPIXEL_API_KEY, username)
-        except HypixelClientError as exc:
-            return await ctx.send(f"Error: {exc}")
+        async with ctx.typing():
+            try:
+                bundle = await fetch_hypixel_player(self.bot.HYPIXEL_API_KEY, username)
+            except HypixelClientError as exc:
+                return await ctx.send(format_hypixel_error(exc))
 
         player = bundle.player
         stats = player.get("stats", {}) or {}

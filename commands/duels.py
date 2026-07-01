@@ -7,6 +7,7 @@ from services.hypixel_client import (
     HypixelClientError,
     as_int,
     fetch_hypixel_player,
+    format_hypixel_error,
     format_number,
     get_rank,
     network_level,
@@ -283,10 +284,11 @@ class Duels(commands.Cog):
 
     @commands.command(name="duels", aliases=["duel"], help="Show detailed Duels stats with a selectable mode menu.")
     async def duels(self, ctx: commands.Context, username: str):
-        try:
-            bundle = await fetch_hypixel_player(self.bot.HYPIXEL_API_KEY, username)
-        except HypixelClientError as exc:
-            return await ctx.send(f"Error: {exc}")
+        async with ctx.typing():
+            try:
+                bundle = await fetch_hypixel_player(self.bot.HYPIXEL_API_KEY, username)
+            except HypixelClientError as exc:
+                return await ctx.send(format_hypixel_error(exc))
 
         view = DuelsView(ctx.author.id, bundle, bundle.player)
         await ctx.send(embed=view.build_embed(), view=view)
