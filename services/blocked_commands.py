@@ -5,7 +5,6 @@ KEREVIZCRAFT_COMMAND_NAMES = {
     "chop",
     "craft",
     "craftprofile",
-    "duel",
     "farm",
     "fight",
     "inv",

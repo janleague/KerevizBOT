@@ -4,9 +4,11 @@ from services.hypixel_client import (
     HypixelRateLimit,
     MinecraftPlayerNotFound,
     bedwars_pro_score,
+    choose_skyblock_profile,
     clean_username,
     clear_hypixel_cache,
     fetch_player_data,
+    fetch_skyblock_profiles,
     format_hypixel_error,
     last_game_name,
     parse_rate_limit_headers,
@@ -159,6 +161,71 @@ class HypixelClientTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertLess(casual.score, 30)
         self.assertGreaterEqual(pro.score, 80)
+
+    async def test_fetches_and_caches_skyblock_profiles(self):
+        session = FakeSession(
+            FakeResponse(
+                200,
+                {
+                    "success": True,
+                    "profiles": [
+                        {
+                            "profile_id": "profile-1",
+                            "cute_name": "Apple",
+                            "members": {"abc123": {"leveling": {"experience": 1200}}},
+                        }
+                    ],
+                },
+                {"RateLimit-Remaining": "10", "RateLimit-Reset": "60"},
+            ),
+        )
+
+        first = await fetch_skyblock_profiles(session, "api-key", "abc123")
+        second = await fetch_skyblock_profiles(session, "api-key", "abc123")
+
+        self.assertEqual(first[0]["cute_name"], "Apple")
+        self.assertEqual(second[0]["cute_name"], "Apple")
+        self.assertIsNot(first, second)
+        self.assertEqual(len(session.calls), 1)
+
+    def test_chooses_selected_skyblock_profile_first(self):
+        profiles = [
+            {
+                "profile_id": "profile-1",
+                "cute_name": "Apple",
+                "selected": False,
+                "members": {"abc123": {"leveling": {"experience": 900000}}},
+            },
+            {
+                "profile_id": "profile-2",
+                "cute_name": "Banana",
+                "selected": True,
+                "members": {"abc123": {"leveling": {"experience": 1000}}},
+            },
+        ]
+
+        profile, member = choose_skyblock_profile(profiles, "abc123")
+
+        self.assertEqual(profile["cute_name"], "Banana")
+        self.assertEqual(member["leveling"]["experience"], 1000)
+
+    def test_chooses_best_skyblock_profile_without_selected_flag(self):
+        profiles = [
+            {
+                "profile_id": "profile-1",
+                "cute_name": "Apple",
+                "members": {"abc123": {"leveling": {"experience": 1000}}},
+            },
+            {
+                "profile_id": "profile-2",
+                "cute_name": "Banana",
+                "members": {"abc123": {"leveling": {"experience": 900000}}},
+            },
+        ]
+
+        profile, _member = choose_skyblock_profile(profiles, "abc123")
+
+        self.assertEqual(profile["cute_name"], "Banana")
 
 
 if __name__ == "__main__":

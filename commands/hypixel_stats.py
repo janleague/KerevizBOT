@@ -11,7 +11,6 @@ from services.hypixel_client import (
     get_rank,
     last_game_name,
     network_level,
-    ratio,
 )
 
 
@@ -42,7 +41,6 @@ class HypixelStats(commands.Cog):
         stats = player.get("stats", {}) or {}
         bedwars = stats.get("Bedwars", {}) or {}
         skywars = stats.get("SkyWars", {}) or {}
-        duels = stats.get("Duels", {}) or {}
 
         displayname = player.get("displayname", bundle.username)
         rank = get_rank(player)
@@ -54,10 +52,6 @@ class HypixelStats(commands.Cog):
 
         bw_wins = as_int(bedwars.get("wins_bedwars", 0))
         sw_wins = as_int(skywars.get("wins", 0))
-        duels_wins = as_int(duels.get("wins", 0))
-        duels_losses = as_int(duels.get("losses", 0))
-        duels_kills = as_int(duels.get("kills", 0))
-        duels_deaths = as_int(duels.get("deaths", 0))
 
         embed = discord.Embed(
             title=f"{displayname} | Hypixel Profile",
@@ -79,8 +73,7 @@ class HypixelStats(commands.Cog):
             value=(
                 f"BedWars Wins: `{format_number(bw_wins)}`\n"
                 f"SkyWars Wins: `{format_number(sw_wins)}`\n"
-                f"Duels Wins: `{format_number(duels_wins)}` | WLR `{ratio(duels_wins, duels_losses)}`\n"
-                f"Duels Kills: `{format_number(duels_kills)}` | KDR `{ratio(duels_kills, duels_deaths)}`"
+                f"SkyBlock: use `!skyblock {bundle.username}` for detailed profile info."
             ),
             inline=False,
         )

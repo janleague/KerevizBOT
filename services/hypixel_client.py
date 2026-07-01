@@ -16,6 +16,7 @@ import aiohttp
 HTTP_TIMEOUT = aiohttp.ClientTimeout(total=12)
 MOJANG_PROFILE_URL = "https://api.mojang.com/users/profiles/minecraft/{username}"
 HYPIXEL_PLAYER_URL = "https://api.hypixel.net/v2/player"
+HYPIXEL_SKYBLOCK_PROFILES_URL = "https://api.hypixel.net/v2/skyblock/profiles"
 MINECRAFT_USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,16}$")
 
 
@@ -28,6 +29,7 @@ def _positive_int_env(name: str, default: int) -> int:
 
 PROFILE_CACHE_SECONDS = _positive_int_env("HYPIXEL_PROFILE_CACHE_SECONDS", 24 * 60 * 60)
 PLAYER_CACHE_SECONDS = _positive_int_env("HYPIXEL_PLAYER_CACHE_SECONDS", 90)
+SKYBLOCK_PROFILE_CACHE_SECONDS = _positive_int_env("HYPIXEL_SKYBLOCK_PROFILE_CACHE_SECONDS", 120)
 RATE_LIMIT_RETRY_MAX_SECONDS = _positive_int_env("HYPIXEL_RATE_LIMIT_RETRY_MAX_SECONDS", 5)
 
 
@@ -70,6 +72,27 @@ class HypixelPlayerBundle:
 
 
 @dataclass(slots=True)
+class SkyBlockProfileBundle:
+    username: str
+    uuid: str
+    profile: dict[str, Any]
+    member: dict[str, Any]
+
+    @property
+    def profile_id(self) -> str:
+        return str(self.profile.get("profile_id") or "unknown")
+
+    @property
+    def profile_name(self) -> str:
+        return str(self.profile.get("cute_name") or "Unknown")
+
+    @property
+    def game_mode(self) -> str:
+        mode = str(self.profile.get("game_mode") or "normal").strip()
+        return mode.replace("_", " ").title() if mode else "Normal"
+
+
+@dataclass(slots=True)
 class ProScore:
     score: int
     tier: str
@@ -93,6 +116,7 @@ class _RateLimitHeaders:
 _cache_lock = asyncio.Lock()
 _profile_cache: dict[str, _CacheEntry] = {}
 _player_cache: dict[str, _CacheEntry] = {}
+_skyblock_profiles_cache: dict[str, _CacheEntry] = {}
 _rate_limited_until = 0.0
 
 GAME_TYPE_NAMES = {
@@ -133,6 +157,7 @@ def clear_hypixel_cache() -> None:
     global _rate_limited_until
     _profile_cache.clear()
     _player_cache.clear()
+    _skyblock_profiles_cache.clear()
     _rate_limited_until = 0.0
 
 
@@ -153,6 +178,19 @@ async def fetch_hypixel_player(api_key: str | None, username: str) -> HypixelPla
         player = await fetch_player_data(session, api_key, uuid)
 
     return HypixelPlayerBundle(username=resolved_name, uuid=uuid, player=player)
+
+
+async def fetch_skyblock_profile(api_key: str | None, username: str) -> SkyBlockProfileBundle:
+    if not api_key:
+        raise HypixelConfigError("Hypixel API key is not configured.")
+
+    cleaned = clean_username(username)
+    async with aiohttp.ClientSession(timeout=HTTP_TIMEOUT) as session:
+        uuid, resolved_name = await resolve_minecraft_profile(session, cleaned)
+        profiles = await fetch_skyblock_profiles(session, api_key, uuid)
+
+    profile, member = choose_skyblock_profile(profiles, uuid)
+    return SkyBlockProfileBundle(username=resolved_name, uuid=uuid, profile=profile, member=member)
 
 
 async def resolve_minecraft_profile(session: aiohttp.ClientSession, username: str) -> tuple[str, str]:
@@ -180,6 +218,104 @@ async def resolve_minecraft_profile(session: aiohttp.ClientSession, username: st
     value = (uuid, name)
     await _set_cache(_profile_cache, cache_key, value, PROFILE_CACHE_SECONDS)
     return value
+
+
+async def fetch_skyblock_profiles(session: aiohttp.ClientSession, api_key: str, uuid: str) -> list[dict[str, Any]]:
+    normalized_uuid = str(uuid or "").replace("-", "").strip().lower()
+    cached = await _get_cache(_skyblock_profiles_cache, normalized_uuid)
+    if cached is not None:
+        return cached
+
+    active_wait = _active_rate_limit_seconds()
+    if active_wait > 0:
+        raise _rate_limit_error(active_wait)
+
+    headers = {"API-Key": api_key}
+    params = {"uuid": normalized_uuid}
+    data: dict[str, Any] | None = None
+
+    for attempt in range(2):
+        try:
+            async with session.get(HYPIXEL_SKYBLOCK_PROFILES_URL, headers=headers, params=params) as response:
+                limits = parse_rate_limit_headers(response.headers)
+                if response.status == 403:
+                    raise HypixelConfigError("Hypixel API key is invalid or forbidden.")
+                if response.status == 429:
+                    retry_after = limits.reset_after or 60
+                    _remember_rate_limit(retry_after)
+                    if attempt == 0 and retry_after <= RATE_LIMIT_RETRY_MAX_SECONDS:
+                        await asyncio.sleep(retry_after + 0.25)
+                        continue
+                    raise _rate_limit_error(
+                        retry_after,
+                        limit=limits.limit,
+                        remaining=limits.remaining,
+                    )
+                if response.status != 200:
+                    cause = await _response_cause(response)
+                    raise HypixelUnavailable(cause or f"Hypixel SkyBlock API returned HTTP {response.status}.")
+
+                try:
+                    data = await response.json()
+                except (aiohttp.ContentTypeError, ValueError) as exc:
+                    raise HypixelUnavailable("Hypixel SkyBlock returned an invalid response. Please try again shortly.") from exc
+
+                if limits.remaining == 0 and limits.reset_after:
+                    _remember_rate_limit(limits.reset_after)
+                break
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            raise HypixelUnavailable("Failed to contact Hypixel SkyBlock. Please try again shortly.") from exc
+
+    if not isinstance(data, dict):
+        raise HypixelUnavailable("Hypixel SkyBlock returned an empty response. Please try again shortly.")
+    if not data.get("success"):
+        cause = data.get("cause") or "Hypixel SkyBlock request failed."
+        raise HypixelUnavailable(str(cause))
+
+    profiles = data.get("profiles") or []
+    if not isinstance(profiles, list) or not profiles:
+        raise MinecraftPlayerNotFound("No SkyBlock profiles were found for this player.")
+
+    await _set_cache(_skyblock_profiles_cache, normalized_uuid, profiles, SKYBLOCK_PROFILE_CACHE_SECONDS)
+    return copy.deepcopy(profiles)
+
+
+def choose_skyblock_profile(profiles: list[dict[str, Any]], uuid: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    candidates: list[tuple[tuple[int, float, int], dict[str, Any], dict[str, Any]]] = []
+    for profile in profiles:
+        if not isinstance(profile, dict):
+            continue
+        member = skyblock_member(profile, uuid)
+        if member is None:
+            continue
+        selected_score = 1 if profile.get("selected") is True else 0
+        level_exp = nested_number(member, ("leveling", "experience"))
+        last_save = as_int(member.get("last_save"))
+        candidates.append(((selected_score, level_exp, last_save), profile, member))
+
+    if not candidates:
+        raise MinecraftPlayerNotFound("No SkyBlock profile data was found for this player.")
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    _, profile, member = candidates[0]
+    return copy.deepcopy(profile), copy.deepcopy(member)
+
+
+def skyblock_member(profile: dict[str, Any], uuid: str) -> dict[str, Any] | None:
+    members = profile.get("members") or {}
+    if not isinstance(members, dict):
+        return None
+
+    normalized_uuid = str(uuid or "").replace("-", "").strip().lower()
+    dashed_uuid = str(uuid or "").strip().lower()
+    for key in (normalized_uuid, dashed_uuid):
+        member = members.get(key)
+        if isinstance(member, dict):
+            return member
+
+    for key, member in members.items():
+        if str(key).replace("-", "").strip().lower() == normalized_uuid and isinstance(member, dict):
+            return member
+    return None
 
 
 async def fetch_player_data(session: aiohttp.ClientSession, api_key: str, uuid: str) -> dict[str, Any]:
@@ -284,6 +420,26 @@ def clean_game_type_name(value: Any) -> str:
         return "Unknown"
     key = raw.replace("-", "_").replace(" ", "_").upper()
     return GAME_TYPE_NAMES.get(key, raw.replace("_", " ").title())
+
+
+def nested_value(data: dict[str, Any], path: tuple[str, ...], default: Any = None) -> Any:
+    current: Any = data
+    for key in path:
+        if not isinstance(current, dict) or key not in current:
+            return default
+        current = current[key]
+    return current
+
+
+def nested_number(data: dict[str, Any], path: tuple[str, ...], default: float = 0.0) -> float:
+    return as_float(nested_value(data, path), default)
+
+
+def as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def score_bar(score: int) -> str:

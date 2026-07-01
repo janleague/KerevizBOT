@@ -30,7 +30,6 @@ WELCOME_CHANNEL_ID      = int(os.getenv("WELCOME_CHANNEL_ID")) if os.getenv("WEL
 LEAVES_LOG_CHANNEL_ID   = int(os.getenv("LEAVES_LOG_CHANNEL_ID")) if os.getenv("LEAVES_LOG_CHANNEL_ID") else None
 MESSAGES_LOG_CHANNEL_ID = int(os.getenv("MESSAGES_LOG_CHANNEL_ID")) if os.getenv("MESSAGES_LOG_CHANNEL_ID") else None
 GITHUB_URL              = os.getenv("GITHUB_URL")
-POLLINATIONS_API_KEY    = os.getenv("POLLINATIONS_API_KEY")
 
 # ===================== CONFIG =====================
 ANNOUNCE_INTERVAL = 900  # seconds between YouTube feed checks
@@ -69,7 +68,6 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 bot.HYPIXEL_API_KEY = HYPIXEL_API_KEY
-bot.POLLINATIONS_API_KEY = POLLINATIONS_API_KEY
 
 start_time       = time.time()
 log_enabled      = True

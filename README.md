@@ -1,6 +1,6 @@
 # KerevizBOT
 
-A polished, modular Discord bot built for community management and creator-focused servers. KerevizBOT combines moderation tools, giveaway automation, invite tracking, YouTube upload alerts, AI utilities, Hypixel stats, and Firebase-backed persistence in one Python application.
+A polished, modular Discord bot built for community management and creator-focused servers. KerevizBOT combines moderation tools, giveaway automation, invite tracking, YouTube upload alerts, Hypixel stats, and Firebase-backed persistence in one Python application.
 
 ## Highlights
 
@@ -13,8 +13,7 @@ A polished, modular Discord bot built for community management and creator-focus
 - **Reaction roles**: persistent notification-role panel for YouTube and giveaway pings.
 - **Subscriber verification**: button-based Subscriber role request flow with temporary private proof upload channels, staff review, public status logs, and one request per member every 24 hours.
 - **Firestore storage alerts**: checks Firestore data and index storage and warns staff before the free-tier storage limit is reached.
-- **AI commands**: free text and image utilities powered by Pollinations.
-- **Hypixel stats**: profile, BedWars, SkyWars, and Duels player statistics with clean Discord embeds.
+- **Hypixel stats**: profile, BedWars, SkyWars, and detailed SkyBlock player statistics with clean Discord embeds.
 - **Minecraft server discovery**: random live server lookup from a Firestore-backed server list.
 - **Firebase persistence**: Firestore stores YouTube announcements, invite tracking, and Minecraft server data.
 
@@ -34,12 +33,12 @@ KerevizBOT/
   bot.py
   commands/
     fun/
-    ai.py
     ban.py
     deleted_image_logs.py
     giveaway.py
     guard.py
     invite_tracker.py
+    skyblock.py
     ...
   services/
     deleted_image_store.py
@@ -74,7 +73,6 @@ LEAVES_LOG_CHANNEL_ID=optional-leaves-log-channel-id
 MESSAGES_LOG_CHANNEL_ID=optional-message-log-channel-id
 DELETED_IMAGE_LOG_CHANNEL_ID=optional-deleted-image-log-channel-id
 HYPIXEL_API_KEY=optional-initial-hypixel-api-key
-POLLINATIONS_API_KEY=optional-pollinations-key
 GITHUB_URL=https://github.com/your-name/your-repo
 FIREBASE_CREDENTIALS_PATH=firebase-service-account.json
 FIREBASE_PROJECT_ID=your-firebase-project-id
@@ -267,22 +265,16 @@ Recommended Google Cloud backup alert:
 - `!rms` - Alias for `!randomminecraftserver`.
 - `/rmsadd` - Owner-only command to add a Minecraft server to Firestore.
 
-### AI
-
-- `!ai`
-- `/ai ask`
-- `/ai summarize`
-- `/ai rewrite`
-- `/ai translate`
-- `/ai image`
-
 ### Hypixel
 
 - `!hstats`
 - `!hypixel`
-- `!duels`
 - `!bedwars`
+- `!bw`
 - `!skywars`
+- `!sw`
+- `!skyblock`
+- `!sb`
 - `/hypixelapi` - Owner-only command to update the Hypixel API key.
 
 ## Security
