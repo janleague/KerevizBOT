@@ -6,13 +6,13 @@ from services.blocked_commands import KEREVIZCRAFT_CATEGORY, KEREVIZCRAFT_COMMAN
 
 CATEGORY_META = {
     "Admin": {"emoji": "<:bhammer:1521924441976864968>", "desc": "Shows moderation commands."},
-    "Fun": {"emoji": None, "desc": "Shows fun and entertainment commands."},
-    "General": {"emoji": None, "desc": "Shows general commands."},
+    "Fun": {"emoji": "\U0001F389", "desc": "Shows fun and entertainment commands."},
+    "General": {"emoji": "\u2728", "desc": "Shows general commands."},
     "Guard": {"emoji": "<:bguard:1521924566992294070>", "desc": "Shows server protection commands."},
     "Hypixel": {"emoji": "<:Hypixel:1521923877096132678>", "desc": "Shows Hypixel-related commands."},
-    "Invites": {"emoji": None, "desc": "Shows invite tracking commands."},
+    "Invites": {"emoji": "\U0001F4E8", "desc": "Shows invite tracking commands."},
 }
-FALLBACK_META = {"emoji": None, "desc": "Shows commands."}
+FALLBACK_META = {"emoji": "\U0001F4E6", "desc": "Shows commands."}
 
 
 class HelpSelect(discord.ui.Select):
