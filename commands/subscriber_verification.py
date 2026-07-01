@@ -71,6 +71,21 @@ def proof_upload_channel_name(user_id: int) -> str:
     return f"sub-proof-{int(user_id)}"
 
 
+def user_id_from_proof_channel(channel: discord.TextChannel) -> int | None:
+    if channel.name.startswith("sub-proof-"):
+        raw_id = channel.name.removeprefix("sub-proof-")
+        if raw_id.isdigit():
+            return int(raw_id)
+
+    topic = channel.topic or ""
+    marker = "member_id="
+    if marker in topic:
+        raw_id = topic.split(marker, 1)[1].split(" ", 1)[0].strip()
+        if raw_id.isdigit():
+            return int(raw_id)
+    return None
+
+
 def seconds_until_next_submission(
     requests: dict[str, dict[str, Any]],
     guild_id: int,
@@ -138,7 +153,7 @@ class SubscriberVerificationPanelView(discord.ui.View):
         custom_id=PANEL_BUTTON_CUSTOM_ID,
     )
     async def request_role(self, interaction: discord.Interaction, button: discord.ui.Button):  # noqa: ARG002
-        await self.cog.open_submission_modal(interaction)
+        await self.cog.open_proof_channel(interaction)
 
 
 class SubscriberVerificationReviewView(discord.ui.View):
@@ -157,29 +172,6 @@ class SubscriberVerificationReviewView(discord.ui.View):
     @discord.ui.button(label="Reject", style=discord.ButtonStyle.danger, custom_id=REJECT_CUSTOM_ID)
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):  # noqa: ARG002
         await self.cog.open_rejection_modal(interaction)
-
-
-class SubscriberVerificationModal(discord.ui.Modal, title="Subscriber Proof Setup"):
-    upload_notice = discord.ui.TextDisplay(
-        "Submit your YouTube username first. I will then open a private temporary channel in this server "
-        "where you can upload your subscription screenshot as a normal image message."
-    )
-    youtube_username = discord.ui.TextInput(
-        label="YouTube username",
-        placeholder="@your-youtube-username - screenshot upload comes next",
-        min_length=2,
-        max_length=100,
-    )
-
-    def __init__(self, cog: "SubscriberVerification"):
-        super().__init__()
-        self.cog = cog
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await self.cog.submit_request(
-            interaction,
-            youtube_username=str(self.youtube_username.value),
-        )
 
 
 class SubscriberRejectionModal(discord.ui.Modal, title="Reject Subscriber Request"):
@@ -207,7 +199,7 @@ class SubscriberRejectionModal(discord.ui.Modal, title="Reject Subscriber Reques
 
 
 class SubscriberVerification(commands.Cog):
-    """Button and modal based Subscriber role verification workflow."""
+    """Button based Subscriber role verification workflow."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -351,6 +343,99 @@ class SubscriberVerification(commands.Cog):
         except (discord.Forbidden, discord.HTTPException) as exc:
             print(f"[SUB-VERIFY] Could not configure proof category privacy: {exc}")
 
+    async def _grant_proof_category_access(
+        self,
+        guild: discord.Guild,
+        category: discord.CategoryChannel,
+        member: discord.Member,
+    ) -> bool:
+        overwrite = category.overwrites_for(member)
+        was_empty = overwrite.is_empty()
+        changed = False
+
+        updates = {
+            "view_channel": True,
+            "read_message_history": True,
+        }
+        for attr, value in updates.items():
+            if getattr(overwrite, attr) is not value:
+                setattr(overwrite, attr, value)
+                changed = True
+
+        if not changed:
+            return was_empty
+
+        try:
+            await category.set_permissions(
+                member,
+                overwrite=overwrite,
+                reason="Allow temporary Subscriber proof category visibility",
+            )
+        except (discord.Forbidden, discord.HTTPException) as exc:
+            print(f"[SUB-VERIFY] Could not grant proof category access for {member.id}: {exc}")
+        return was_empty
+
+    def _active_proof_channel_for_user(self, guild_id: int, user_id: int) -> bool:
+        for session in self._pending_proof_channels.values():
+            if (
+                session.get("guild_id") == guild_id
+                and session.get("user_id") == user_id
+                and not pending_proof_channel_expired(session)
+            ):
+                return True
+        return False
+
+    async def _revoke_proof_category_access(
+        self,
+        guild: discord.Guild,
+        user_id: int,
+        *,
+        restore_empty_overwrite: bool = True,
+    ) -> None:
+        if self._active_proof_channel_for_user(guild.id, user_id):
+            return
+
+        category = self._proof_upload_category(guild)
+        if category is None:
+            return
+
+        member = guild.get_member(user_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(user_id)
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                return
+
+        overwrite = category.overwrites_for(member)
+        if overwrite.is_empty():
+            return
+
+        try:
+            if restore_empty_overwrite:
+                await category.set_permissions(
+                    member,
+                    overwrite=None,
+                    reason="Remove temporary Subscriber proof category visibility",
+                )
+                return
+
+            overwrite.view_channel = None
+            overwrite.read_message_history = None
+            if overwrite.is_empty():
+                await category.set_permissions(
+                    member,
+                    overwrite=None,
+                    reason="Remove temporary Subscriber proof category visibility",
+                )
+            else:
+                await category.set_permissions(
+                    member,
+                    overwrite=overwrite,
+                    reason="Remove temporary Subscriber proof category visibility",
+                )
+        except (discord.Forbidden, discord.HTTPException) as exc:
+            print(f"[SUB-VERIFY] Could not revoke proof category access for {user_id}: {exc}")
+
     def _setup_issues_for_channel(
         self,
         guild: discord.Guild,
@@ -413,8 +498,7 @@ class SubscriberVerification(commands.Cog):
             title="Subscriber Role Verification",
             description=(
                 "Use the button below to request the **Subscriber** role.\n\n"
-                "The form asks for your YouTube username first. After that, I will open a private "
-                "temporary channel where you can upload your subscription screenshot."
+                "I will open a private temporary channel where you can upload your subscription screenshot."
             ),
             color=discord.Color(PANEL_COLOR),
             timestamp=discord.utils.utcnow(),
@@ -422,7 +506,6 @@ class SubscriberVerification(commands.Cog):
         embed.add_field(
             name="What You Need",
             value=(
-                "- Your YouTube username\n"
                 "- A subscription screenshot uploaded in your private proof channel\n"
                 "- One request every 24 hours"
             ),
@@ -441,9 +524,8 @@ class SubscriberVerification(commands.Cog):
         embed.add_field(
             name="Proof Upload",
             value=(
-                "After the form, I will open a private temporary channel for you. Upload your screenshot there "
-                "as a normal image message, including on mobile. The channel is deleted after your request is "
-                "created or after 10 minutes."
+                "Press the button and upload your screenshot as a normal image message, including on mobile. "
+                "The channel is deleted after your request is created or after 10 minutes."
             ),
             inline=False,
         )
@@ -699,6 +781,14 @@ class SubscriberVerification(commands.Cog):
                     except (discord.Forbidden, discord.HTTPException):
                         pass
                     await self._delete_proof_channel(channel, reason="Subscriber proof upload expired")
+                guild = self.bot.get_guild(int(session.get("guild_id") or 0))
+                user_id = int(session.get("user_id") or 0)
+                if guild and user_id:
+                    await self._revoke_proof_category_access(
+                        guild,
+                        user_id,
+                        restore_empty_overwrite=bool(session.get("category_overwrite_was_empty", True)),
+                    )
                 cleaned += 1
             return cleaned
 
@@ -715,41 +805,19 @@ class SubscriberVerification(commands.Cog):
                     if channel.id in active_channel_ids:
                         continue
                     if channel.name.startswith("sub-proof-") or PROOF_CHANNEL_TOPIC_MARKER in (channel.topic or ""):
+                        user_id = user_id_from_proof_channel(channel)
                         await self._delete_proof_channel(channel, reason="Clean up stale Subscriber proof upload channel")
+                        if user_id:
+                            await self._revoke_proof_category_access(
+                                target_guild,
+                                user_id,
+                                restore_empty_overwrite=True,
+                            )
                         cleaned += 1
         return cleaned
 
-    async def open_submission_modal(self, interaction: discord.Interaction) -> None:
-        if not interaction.guild or not isinstance(interaction.user, discord.Member):
-            return await interaction.response.send_message("This form can only be used in the server.", ephemeral=True)
-
-        role = interaction.guild.get_role(SUBSCRIBER_ROLE_ID)
-        if role and role in interaction.user.roles:
-            return await interaction.response.send_message("You already have the Subscriber role.", ephemeral=True)
-
-        pending = self._pending_request_for_user(interaction.guild.id, interaction.user.id)
-        if pending:
-            return await interaction.response.send_message(
-                "You already have a pending Subscriber verification request.",
-                ephemeral=True,
-            )
-
-        cooldown = seconds_until_next_submission(self._requests, interaction.guild.id, interaction.user.id)
-        if cooldown:
-            return await interaction.response.send_message(
-                f"You can submit another Subscriber verification request in about {format_cooldown(cooldown)}.",
-                ephemeral=True,
-            )
-
-        panel, public_log, private_review = await self._channels()
-        issues = self._setup_issues(interaction.guild, panel, public_log, private_review)
-        if issues:
-            return await interaction.response.send_message(
-                "Subscriber verification is not ready yet. Please contact staff.",
-                ephemeral=True,
-            )
-
-        await interaction.response.send_modal(SubscriberVerificationModal(self))
+    async def open_proof_channel(self, interaction: discord.Interaction) -> None:
+        await self._start_proof_channel_upload(interaction)
 
     def _public_embed(self, record: dict[str, Any]) -> discord.Embed:
         status = str(record.get("status") or "pending")
@@ -802,7 +870,8 @@ class SubscriberVerification(commands.Cog):
             timestamp=datetime.fromtimestamp(int(record.get("created_at") or now_ts()), timezone.utc),
         )
         embed.add_field(name="Member", value=f"<@{record['user_id']}> (`{record['user_id']}`)", inline=False)
-        embed.add_field(name="YouTube Username", value=record.get("youtube_username") or "Not provided", inline=False)
+        if record.get("youtube_username"):
+            embed.add_field(name="YouTube Username", value=record.get("youtube_username"), inline=False)
         embed.add_field(name="Proof Image", value=record.get("screenshot_url") or "Not provided", inline=False)
         embed.add_field(name="Status", value=status.title(), inline=True)
         embed.add_field(name="Request ID", value=f"`{record['id']}`", inline=True)
@@ -848,31 +917,20 @@ class SubscriberVerification(commands.Cog):
             return content
         return None
 
-    async def submit_request(
-        self,
-        interaction: discord.Interaction,
-        *,
-        youtube_username: str,
-    ) -> None:
-        if not interaction.guild or not isinstance(interaction.user, discord.Member):
-            return await interaction.response.send_message("This form can only be used in the server.", ephemeral=True)
-
-        youtube_username = youtube_username.strip()
-        await self._start_proof_channel_upload(interaction, youtube_username=youtube_username)
-
     async def _create_proof_upload_channel(
         self,
         guild: discord.Guild,
         member: discord.Member,
         *,
         expires_at: int,
-    ) -> discord.TextChannel | None:
+    ) -> tuple[discord.TextChannel | None, bool]:
         category = self._proof_upload_category(guild)
         if category is None:
             print(f"[SUB-VERIFY] Proof upload category not found: {PROOF_UPLOAD_CATEGORY_NAME}")
-            return None
+            return None, True
         me = self._bot_member(guild)
         await self._ensure_proof_category_privacy(guild, category)
+        category_overwrite_was_empty = await self._grant_proof_category_access(guild, category, member)
 
         overwrites: dict[discord.abc.Snowflake, discord.PermissionOverwrite] = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
@@ -894,26 +952,31 @@ class SubscriberVerification(commands.Cog):
             )
 
         try:
-            return await guild.create_text_channel(
+            channel = await guild.create_text_channel(
                 name=proof_upload_channel_name(member.id),
                 category=category,
                 overwrites=overwrites,
                 topic=(
                     f"{PROOF_CHANNEL_TOPIC_MARKER} | Temporary Subscriber proof upload for "
-                    f"{member} ({member.id}). Expires at {expires_at}."
+                    f"{member} ({member.id}). member_id={member.id} Expires at {expires_at}."
                 ),
                 reason=f"Subscriber proof upload for {member} ({member.id})",
             )
+            return channel, category_overwrite_was_empty
         except (discord.Forbidden, discord.HTTPException) as exc:
             print(f"[SUB-VERIFY] Could not create proof upload channel for {member.id}: {exc}")
-            return None
+            await self._revoke_proof_category_access(
+                guild,
+                member.id,
+                restore_empty_overwrite=category_overwrite_was_empty,
+            )
+            return None, category_overwrite_was_empty
 
     async def _send_proof_upload_instructions(
         self,
         channel: discord.TextChannel,
         *,
         member: discord.Member,
-        youtube_username: str,
         expires_at: int,
     ) -> bool:
         embed = discord.Embed(
@@ -921,13 +984,13 @@ class SubscriberVerification(commands.Cog):
             description=(
                 "Upload one subscription screenshot in this private temporary channel.\n\n"
                 "Mobile users can upload it here as a normal image message. After I receive a valid image, "
-                "your request will be sent to staff and this channel will be deleted."
+                "your request will be sent to staff and this channel will be deleted. If this channel expires, "
+                "press the panel button again."
             ),
             color=discord.Color(PANEL_COLOR),
             timestamp=discord.utils.utcnow(),
         )
         embed.add_field(name="Member", value=member.mention, inline=True)
-        embed.add_field(name="YouTube Username", value=youtube_username or "Not provided", inline=True)
         embed.add_field(name="Accepted Files", value="PNG, JPG, JPEG, WEBP, or GIF under 8 MB", inline=False)
         embed.add_field(name="Expires", value=f"<t:{expires_at}:R>", inline=True)
         embed.set_footer(text="This channel is visible only to you and the bot. Staff will receive the submitted proof.")
@@ -942,9 +1005,9 @@ class SubscriberVerification(commands.Cog):
             print(f"[SUB-VERIFY] Could not send proof upload instructions in {channel.id}: {exc}")
             return False
 
-    async def _start_proof_channel_upload(self, interaction: discord.Interaction, *, youtube_username: str) -> None:
+    async def _start_proof_channel_upload(self, interaction: discord.Interaction) -> None:
         if not interaction.guild or not isinstance(interaction.user, discord.Member):
-            return await interaction.response.send_message("This form can only be used in the server.", ephemeral=True)
+            return await interaction.response.send_message("This button can only be used in the server.", ephemeral=True)
 
         role = interaction.guild.get_role(SUBSCRIBER_ROLE_ID)
         if role and role in interaction.user.roles:
@@ -987,7 +1050,11 @@ class SubscriberVerification(commands.Cog):
                 self._pending_proof_channels.pop(channel_id, None)
 
             expires_at = now_ts() + PROOF_UPLOAD_TIMEOUT_SECONDS
-            channel = await self._create_proof_upload_channel(interaction.guild, interaction.user, expires_at=expires_at)
+            channel, category_overwrite_was_empty = await self._create_proof_upload_channel(
+                interaction.guild,
+                interaction.user,
+                expires_at=expires_at,
+            )
             if channel is None:
                 return await interaction.response.send_message(
                     "I could not create your private proof upload channel. Please contact staff.",
@@ -997,19 +1064,23 @@ class SubscriberVerification(commands.Cog):
             self._pending_proof_channels[channel.id] = {
                 "guild_id": interaction.guild.id,
                 "user_id": interaction.user.id,
-                "youtube_username": youtube_username.strip(),
                 "expires_at": expires_at,
+                "category_overwrite_was_empty": category_overwrite_was_empty,
             }
 
         instructions_sent = await self._send_proof_upload_instructions(
             channel,
             member=interaction.user,
-            youtube_username=youtube_username.strip(),
             expires_at=expires_at,
         )
         if not instructions_sent:
-            self._pending_proof_channels.pop(channel.id, None)
+            session = self._pending_proof_channels.pop(channel.id, {})
             await self._delete_proof_channel(channel, reason="Subscriber proof upload setup failed")
+            await self._revoke_proof_category_access(
+                interaction.guild,
+                interaction.user.id,
+                restore_empty_overwrite=bool(session.get("category_overwrite_was_empty", True)),
+            )
             return await interaction.response.send_message(
                 "I could not prepare your private proof upload channel. Please contact staff.",
                 ephemeral=True,
@@ -1026,7 +1097,7 @@ class SubscriberVerification(commands.Cog):
         guild: discord.Guild,
         member: discord.Member,
         *,
-        youtube_username: str,
+        youtube_username: str = "",
         proof_url: str,
     ) -> tuple[bool, str]:
         role = guild.get_role(SUBSCRIBER_ROLE_ID)
@@ -1052,7 +1123,7 @@ class SubscriberVerification(commands.Cog):
                 "id": request_id,
                 "guild_id": guild.id,
                 "user_id": member.id,
-                "youtube_username": youtube_username,
+                "youtube_username": youtube_username.strip(),
                 "screenshot_url": proof_url,
                 "status": "pending",
                 "created_at": now_ts(),
@@ -1115,6 +1186,14 @@ class SubscriberVerification(commands.Cog):
             await message.channel.send("This Subscriber proof upload channel expired. Please start a new request.")
             if isinstance(message.channel, discord.TextChannel):
                 await self._delete_proof_channel(message.channel, reason="Subscriber proof upload expired")
+            guild = self.bot.get_guild(int(session.get("guild_id") or 0))
+            user_id = int(session.get("user_id") or 0)
+            if guild and user_id:
+                await self._revoke_proof_category_access(
+                    guild,
+                    user_id,
+                    restore_empty_overwrite=bool(session.get("category_overwrite_was_empty", True)),
+                )
             return
 
         attachment = select_supported_image_attachment(message.attachments)
@@ -1134,12 +1213,16 @@ class SubscriberVerification(commands.Cog):
         member = await self._fetch_member(guild, int(session["user_id"]))
         if member is None:
             self._pending_proof_channels.pop(message.channel.id, None)
+            await self._revoke_proof_category_access(
+                guild,
+                int(session["user_id"]),
+                restore_empty_overwrite=bool(session.get("category_overwrite_was_empty", True)),
+            )
             return await message.channel.send("I could not find your server membership. Please try again from the server.")
 
         success, response = await self._create_request_for_member(
             guild,
             member,
-            youtube_username=str(session["youtube_username"]),
             proof_url=attachment.url,
         )
         if not success:
@@ -1152,6 +1235,11 @@ class SubscriberVerification(commands.Cog):
         if isinstance(message.channel, discord.TextChannel):
             await asyncio.sleep(5)
             await self._delete_proof_channel(message.channel, reason="Subscriber proof upload completed")
+        await self._revoke_proof_category_access(
+            guild,
+            member.id,
+            restore_empty_overwrite=bool(session.get("category_overwrite_was_empty", True)),
+        )
 
     async def _fetch_member(self, guild: discord.Guild, user_id: int) -> discord.Member | None:
         member = guild.get_member(user_id)

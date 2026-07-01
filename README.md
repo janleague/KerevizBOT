@@ -11,7 +11,7 @@ A polished, modular Discord bot built for community management and creator-focus
 - **Invite tracking**: tracks invite usage, member joins/leaves, reward roles, leaderboards, and logging.
 - **Giveaways**: persistent button-based giveaways with rerolls, role requirements, bonus entries, and recovery for missed announcements.
 - **Reaction roles**: persistent notification-role panel for YouTube and giveaway pings.
-- **Subscriber verification**: modal-based Subscriber role request flow with temporary private proof upload channels, staff review, public status logs, and one request per member every 24 hours.
+- **Subscriber verification**: button-based Subscriber role request flow with temporary private proof upload channels, staff review, public status logs, and one request per member every 24 hours.
 - **Firestore storage alerts**: checks Firestore data and index storage and warns staff before the free-tier storage limit is reached.
 - **AI commands**: free text and image utilities powered by Pollinations.
 - **Hypixel stats**: profile, BedWars, SkyWars, and Duels player statistics with clean Discord embeds.
@@ -140,7 +140,7 @@ The Subscriber verification system stores:
 - `subscriber_verifications/{request_id}`
 - `subscriber_verification_panels/{guild_id}`
 
-Subscriber verification asks members for their YouTube username first, then opens a temporary private proof upload channel in the server. Members upload one screenshot image attachment there, including on mobile clients where modal file uploads may be hidden. The channel is deleted after the request is created or after 10 minutes.
+Subscriber verification opens a temporary private proof upload channel as soon as a member presses the panel button. Members upload one screenshot image attachment there, including on mobile clients where Discord modal inputs can be unreliable. The channel is deleted after the request is created or after 10 minutes. If the temporary channel expires before a screenshot is submitted, the member can press the button again.
 
 Subscriber proof upload channels are created under the `PROOFS` category. The bot hides that category from `@everyone`, opens each temporary channel only for the requesting member and the bot, and cleans up stale `sub-proof-*` channels on startup.
 

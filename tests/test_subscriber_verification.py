@@ -2,7 +2,6 @@ import unittest
 
 from commands.subscriber_verification import (
     SubscriberRejectionModal,
-    SubscriberVerificationModal,
     PROOF_UPLOAD_TIMEOUT_SECONDS,
     REQUEST_RETENTION_SECONDS,
     STAFF_ROLE_ID,
@@ -17,6 +16,7 @@ from commands.subscriber_verification import (
     seconds_until_next_submission,
     select_supported_image_attachment,
     should_delete_request,
+    user_id_from_proof_channel,
 )
 from services.subscriber_verification_store import normalize_panel, normalize_request
 
@@ -30,6 +30,13 @@ class SubscriberVerificationConfigTests(unittest.TestCase):
         self.assertTrue(is_proof_upload_category_name(" proofs "))
         self.assertFalse(is_proof_upload_category_name("KEREVIZ BOT"))
         self.assertEqual(proof_upload_channel_name(123), "sub-proof-123")
+
+    def test_extracts_member_id_from_proof_channel_name(self):
+        class Channel:
+            name = "sub-proof-123"
+            topic = ""
+
+        self.assertEqual(user_id_from_proof_channel(Channel()), 123)
 
     def test_validates_screenshot_image_files(self):
         self.assertTrue(is_supported_image_file("proof.txt", "image/png"))
@@ -122,16 +129,6 @@ class SubscriberVerificationConfigTests(unittest.TestCase):
         cog = SubscriberVerification(bot=None)
         modal = SubscriberRejectionModal(cog, review_message_id=123)
         self.assertFalse(modal.reason.required)
-
-    def test_submission_modal_explains_temporary_channel_flow(self):
-        cog = SubscriberVerification(bot=None)
-        modal = SubscriberVerificationModal(cog)
-        child_types = [type(child).__name__ for child in modal.children]
-        text_content = "\n".join(getattr(child, "content", "") for child in modal.children)
-
-        self.assertEqual(child_types, ["TextDisplay", "TextInput"])
-        self.assertIn("private temporary channel", text_content)
-        self.assertNotIn("Screenshot image URL", text_content)
 
 
 class SubscriberVerificationStoreTests(unittest.TestCase):
